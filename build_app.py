@@ -108,7 +108,12 @@ def stage_binaries() -> None:
                     os.chmod(q, os.stat(q).st_mode | stat.S_IXUSR)
                 except OSError:
                     pass
-    print("bin/ 已放到运行时目录")
+        # 静态资源也放一份到 exe 同目录：不依赖 _MEIPASS，用户还能直接改界面
+        for name in ("index.html", "logo.png", "favicon.png", "app.ico"):
+            src = os.path.join(ROOT, name)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(root, name))
+    print("bin/ 与静态资源已放到运行时目录")
 
 
 def zip_dir(src: str, out: str, arc_root: str = "VideoSaver") -> None:

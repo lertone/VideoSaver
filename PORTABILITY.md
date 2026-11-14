@@ -47,7 +47,7 @@ python build_installer.py --version 1.5.3
 pip install -r requirements-build.txt
 python tools/fetch_bin.py
 python build_app.py
-# 产物：release/VideoSaver-1.5.3-macos-arm64.zip（内含 VideoSaver.app）
+# 产物：release/VideoSaver-1.5.4-macos-arm64.dmg（拖进 Applications）和 .zip（内含 VideoSaver.app）
 ```
 
 未签名/未公证的 `.app` 首次打开会被 Gatekeeper 拦：右键 → 打开，或
@@ -61,7 +61,7 @@ sudo apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config \
 pip install -r requirements-build.txt
 python tools/fetch_bin.py
 python build_app.py
-# 产物：release/VideoSaver-1.5.3-linux-x64.tar.gz
+# 产物：release/VideoSaver-1.5.4-linux-x64.deb（应用菜单 + 图标）和 .tar.gz
 ```
 
 如果 `PyGObject` 装不上，用系统 Python 的 `python3-gi`，或改用 Qt 后端
@@ -81,7 +81,7 @@ python build_app.py
 3. 剪贴板文件（CF_HDROP）：mac/Linux 未实现，点「复制」会提示不支持。
 4. DPI 感知：非 Windows 自动跳过。
 5. 托盘：非 Windows 首版关闭，避免 AppIndicator 依赖。
-6. 安装包：Windows 是 Inno Setup；mac 是 `.app` zip；Linux 是 tar.gz。没有做 `.dmg` / `.deb` / AppImage。
+6. 安装包：Windows 是 Inno Setup；mac 是 `.dmg`（ad-hoc 签名）+ `.app` zip；Linux 是 `.deb` + tar.gz。AppImage 暂未做。
 
 ---
 

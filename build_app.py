@@ -87,7 +87,7 @@ def pyi_args(version: str) -> list[str]:
                  "--collect-submodules", "clr",
                  "--hidden-import", "clr",
                  "--icon", os.path.join(ROOT, "app.ico")]
-    for item in ("index.html", "app.ico", "favicon.png", "logo.png", "donate.png", "bin"):
+    for item in ("index.html", "app.ico", "favicon.png", "logo.png", "donate.png", "donate-alipay.png", "donate-wechat.png", "bin"):
         src = os.path.join(ROOT, item)
         if os.path.exists(src):
             args += ["--add-data", src + sep + item]
@@ -127,7 +127,7 @@ def stage_binaries() -> None:
                 except OSError:
                     pass
         # 静态资源也放一份到 exe 同目录：不依赖 _MEIPASS，用户还能直接改界面
-        for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png"):
+        for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png", "donate-alipay.png", "donate-wechat.png"):
             src = os.path.join(ROOT, name)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(root, name))

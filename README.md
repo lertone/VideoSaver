@@ -73,6 +73,10 @@ VideoSaver 是一个跑在你本机的视频下载与整理工具。粘贴链接
 
 > 便携版里直接双击 `VideoSaver.exe` 仍会尝试桌面窗口；想固定用网页版，就用 `启动-网页版.bat`。
 
+<p align="center"><img src="docs/web.png" width="52%" alt="网页版"></p>
+
+<p align="center"><sub>Zip 网页版：运行在浏览器里，顶部标签栏 / 地址栏属于浏览器，不是 VideoSaver 界面（截图已裁掉）。</sub></p>
+
 ### macOS
 
 1. 打开 dmg，把 `VideoSaver` 拖进 `Applications`；
@@ -89,14 +93,14 @@ xattr -dr com.apple.quarantine /Applications/VideoSaver.app
 Debian / Ubuntu 推荐 `.deb`：
 
 ```bash
-sudo apt install ./VideoSaver-1.5.4-linux-x64.deb
+sudo apt install ./VideoSaver-1.5.5-linux-x64.deb
 ```
 
 依赖会自动装 `python3-gi` 和 `gir1.2-webkit2-4.0`。装完在应用菜单里搜 VideoSaver。
 其它发行版用 tar.gz：
 
 ```bash
-tar -xzf VideoSaver-1.5.4-linux-x64.tar.gz
+tar -xzf VideoSaver-1.5.5-linux-x64.tar.gz
 ./VideoSaver/VideoSaver
 ```
 
@@ -121,10 +125,10 @@ python app_entry.py              # 或 python launch.py（Windows）
 ```powershell
 cd VideoSaver
 python build_exe.py
-python build_installer.py --version 1.5.4
+python build_installer.py --version 1.5.5
 ```
 
-产物：`installer_out/VideoSaver-Setup-1.5.4.exe`、`dist/VideoSaver-1.5.4.zip`。
+产物：`installer_out/VideoSaver-Setup-1.5.5.exe`、`dist/VideoSaver-1.5.5.zip`。
 
 ### macOS（.app + .dmg）
 
@@ -182,8 +186,12 @@ cp private_config.example.py private_config.py
 
 如果 VideoSaver 帮到了你，可以请作者喝杯咖啡。赞助完全自愿，不解锁任何功能，也不影响使用。
 
-- 把微信 / 支付宝赞赏码合并成一张 `donate.png` 放在程序目录，应用内「赞助」就会显示；
-- 或者先给项目点个 Star，这也是很实在的支持。
+应用内「赞助」已内置支付宝 / 微信赞赏码，点顶栏「赞助」即可切换。二维码由收款链接重新生成，
+已去掉海报上的姓名和头像，只保留可扫描的二维码本体和 VideoSaver logo。
+
+<p align="center"><img src="donate.png" width="420" alt="赞赏码"></p>
+
+赞助完全自愿，不解锁任何功能。也可以先给项目点个 Star。
 
 细节见 [DONATE.md](DONATE.md)。
 

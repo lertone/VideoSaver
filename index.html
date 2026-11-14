@@ -1641,12 +1641,19 @@
   .donate-heart { font-size: 30px; color: #ff6b8a; line-height: 1; margin-bottom: 8px; }
   .donate-box h3 { margin: 0 0 6px; font-size: 16px; color: var(--text); }
   .donate-box p { margin: 0 0 14px; font-size: 12px; line-height: 1.7; color: var(--muted); }
+  .donate-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 10px; }
+  .donate-tab {
+    padding: 5px 14px; font-size: 12px; cursor: pointer;
+    color: var(--muted); background: transparent;
+    border: 1px solid rgba(var(--g-ln), .9); border-radius: 8px;
+  }
+  .donate-tab.on { color: var(--text); border-color: var(--accent); background: rgba(var(--g-ac), .12); }
   .donate-qr {
     min-height: 150px; display: grid; place-items: center; padding: 10px;
     border-radius: 12px; border: 1px dashed rgba(var(--g-ln), .9);
     background: rgba(255,255,255,.02); margin-bottom: 14px;
   }
-  .donate-qr img { max-width: 220px; max-height: 260px; border-radius: 8px; }
+  .donate-qr img { max-width: 260px; max-height: 300px; border-radius: 8px; }
   #donateFallback b { display: block; font-size: 12.5px; color: var(--text); margin-bottom: 4px; }
   #donateFallback span { display: block; font-size: 11px; line-height: 1.7; color: var(--muted); }
   #donateFallback code { color: var(--accent); }
@@ -2264,8 +2271,12 @@
     <div class="donate-heart">♥</div>
     <h3>请作者喝杯咖啡</h3>
     <p>如果 VideoSaver 帮到了你，可以自愿赞助。不解锁任何功能，也不影响使用。</p>
+    <div class="donate-tabs">
+      <button class="donate-tab on" data-qr="alipay">支付宝</button>
+      <button class="donate-tab" data-qr="wechat">微信</button>
+    </div>
     <div class="donate-qr">
-      <img id="donateImg" src="/donate.png" alt="赞赏码"
+      <img id="donateImg" src="/donate-alipay.png" alt="赞赏码"
            onerror="this.hidden=true;document.getElementById('donateFallback').hidden=false">
       <div id="donateFallback" hidden>
         <b>作者还没放赞赏码</b>
@@ -6819,6 +6830,15 @@ cd Douyin_TikTok_Download_API</pre>
   (function donateUI() {
     const m = $("donateMask");
     if (!m || !$("donateBtn")) return;
+    const imgs = { alipay: "/donate-alipay.png", wechat: "/donate-wechat.png" };
+    const img = $("donateImg"), fb = $("donateFallback");
+    m.querySelectorAll(".donate-tab").forEach(b => {
+      b.onclick = () => {
+        m.querySelectorAll(".donate-tab").forEach(x => x.classList.toggle("on", x === b));
+        img.hidden = false; fb.hidden = true;
+        img.src = imgs[b.dataset.qr] || imgs.alipay;
+      };
+    });
     $("donateBtn").onclick = () => m.classList.add("show");
     const close = () => m.classList.remove("show");
     $("donateClose").onclick = close;

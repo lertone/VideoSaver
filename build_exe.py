@@ -203,7 +203,7 @@ def stage_assets(onefile=False):
     """
     target = DIST if not onefile else os.path.join(ROOT, "dist")
     ok = True
-    for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png"):
+    for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png", "donate-alipay.png", "donate-wechat.png"):
         src = os.path.join(ROOT, name)
         dst = os.path.join(target, name)
         if not os.path.isfile(src):

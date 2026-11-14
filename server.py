@@ -74,10 +74,14 @@ except Exception:
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.4"
+APP_VERSION = "1.5.5"
 APP_DATE = "2026-11-13"
 
 CHANGELOG = [
+    {"v": "1.5.5", "date": "2026-11-15",
+     "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
+               ("优化", "README 的网页版截图裁掉浏览器标签栏，保存路径打码；补充桌面版与网页版对比说明。"),
+               ("优化", "赞助弹窗二维码放大到 260px，手机更容易扫。")]},
     {"v": "1.5.4", "date": "2026-11-15",
      "items": [("新增", "macOS 安装包改成 .dmg：拖进 Applications 即可，已做 ad-hoc 签名；Linux 增加 .deb，装完有应用菜单和图标。"),
                ("新增", "应用内「赞助」入口；把赞赏码存成 donate.png 放在程序目录即可显示。"),
@@ -3571,7 +3575,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.handle_ytdlp_check()
                 if self.path.startswith("/thumb/"):
                     return self.serve_thumb(self.path[len("/thumb/"):])
-                if path_only in ("/logo.png", "/favicon.png", "/donate.png"):
+                if path_only in ("/logo.png", "/favicon.png", "/donate.png",
+                                 "/donate-alipay.png", "/donate-wechat.png"):
                     return self.serve_static(path_only.lstrip("/"), "image/png")
                 if path_only == "/favicon.ico":
                     return self.serve_static("app.ico", "image/x-icon")

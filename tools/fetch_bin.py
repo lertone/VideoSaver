@@ -14,6 +14,8 @@ import shutil
 import stat
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -30,12 +32,32 @@ IS_MAC = sys.platform == "darwin"
 ARCH = platform.machine().lower()
 
 UA = {"User-Agent": "VideoSaver-build/1.0"}
+TOKEN = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
 
 
 def get(url: str, timeout=120) -> bytes:
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+    headers = dict(UA)
+    if TOKEN and ("github.com" in url or "githubusercontent.com" in url):
+        headers["Authorization"] = "Bearer " + TOKEN
+    last = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code in (403, 429) and attempt < 2:
+                time.sleep(8 * (attempt + 1))
+                continue
+            raise
+        except Exception as e:
+            last = e
+            if attempt < 2:
+                time.sleep(3 * (attempt + 1))
+                continue
+            raise
+    raise last
 
 
 def chmod_x(path: str) -> None:

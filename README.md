@@ -1,46 +1,103 @@
-# VideoSaver
+<p align="center">
+  <img src="logo.png" width="88" alt="VideoSaver">
+</p>
 
-**粘贴链接，一键保存到本机。** 一个本地优先的桌面视频下载器，带 AI 助手、媒体嗅探、文件管理和预览。
+<h1 align="center">VideoSaver</h1>
 
-![screenshot](docs/screenshot.png)
+<p align="center">
+  粘贴链接，一键保存到本机。<br>
+  本地优先的桌面视频下载器：yt-dlp + AI 助手 + 媒体嗅探 + 文件管理。
+</p>
 
-[![build](https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml/badge.svg)](https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml)
-![python](https://img.shields.io/badge/python-3.12-blue)
-![license](https://img.shields.io/badge/license-MIT-green)
+<p align="center">
+  <a href="https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml"><img src="https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml/badge.svg" alt="build"></a>
+  <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
+</p>
+
+![VideoSaver 主界面](docs/screenshot.png)
 
 ---
 
+## 它是什么
+
+VideoSaver 是一个跑在你本机的视频下载与整理工具。粘贴链接、选画质、点开始，文件就落到你的文件夹里；
+下载完还能预览、改名、移动、复制，或者直接让 AI 助手帮你处理。
+
+没有账号、没有云端、没有遥测。配置文件、登录信息、下载记录都在你自己的电脑上。
+
+## 实例如图
+
+<p align="center">
+  <img src="docs/download.png" width="56%" alt="下载进程">
+  &nbsp;&nbsp;
+  <img src="docs/ai.png" width="38%" alt="AI 助手">
+</p>
+
+<p align="center"><sub>下载进程和 AI 助手实例如图</sub></p>
+
 ## 功能
 
-- **多站点下载**：底层 yt-dlp，自带 1600+ 提取器；B 站、YouTube、微博、小红书、快手等。
-- **抖音 / TikTok**：接自建 DTK 解析服务，拿无水印直链（不内置公共解析服务）。
-- **AI 助手**：用自己的 API Key（智谱 / DeepSeek / 阿里百炼 / OpenAI 兼容），能查文件、改设置、找片、下载、剪辑、抽音频、清理残留。
-- **媒体嗅探**：内置侧栏，调用 Edge/Chrome 的调试协议抓取网页里的 `mp4 / m3u8 / mpd` 地址，点一下丢回下载。
-- **文件管理**：搜索、分类、封面开关、点击预览、图片左右翻页、拖拽多选、批量改名/移动/删除、复制到剪贴板。
-- **本地优先**：配置、登录信息、下载文件都在本机；没有账号体系，没有遥测。
-- **主题**：月亮 / 太阳两套玻璃主题，经典主题保留。
+| 能力 | 说明 |
+|---|---|
+| 多站点下载 | 底层 yt-dlp，自带 1600+ 提取器：B 站、YouTube、微博、小红书、快手等 |
+| 抖音 / TikTok | 接自建 DTK 解析服务，拿无水印直链；不内置公共解析服务 |
+| AI 助手 | 用自己的 API Key（智谱 / DeepSeek / 阿里百炼 / OpenAI 兼容），能查文件、改设置、找片、下载、剪辑、抽音频、清理残留 |
+| 媒体嗅探 | 侧栏调用 Edge/Chrome 的调试协议，抓网页里的 `mp4 / m3u8 / mpd`，点一下丢回下载 |
+| 文件管理 | 搜索、分类、封面开关、点击预览、图片左右翻页、拖拽多选、批量改名 / 移动 / 删除、复制到剪贴板 |
+| 进度与续传 | 实时速度 / 百分比 / 剩余时间，失败自动重试，中断残片可一键清理 |
+| 本地优先 | 配置、Cookie、日志、下载文件都在本机；没有账号体系，没有统计上报 |
+| 主题 | 月亮 / 太阳两套玻璃主题，经典主题保留 |
 
-## 下载安装
+## 下载
 
-### Windows
+到 [Releases](https://github.com/lertone/VideoSaver/releases) 下载对应系统的包。
 
-到 [Releases](https://github.com/lertone/VideoSaver/releases) 下载 `VideoSaver-Setup-x.y.z.exe`，双击安装。
-也可以下载绿色包解压后直接运行 `VideoSaver.exe`。
+| 系统 | 文件 | 说明 |
+|---|---|---|
+| Windows | `VideoSaver-Setup-x.y.z.exe` | **安装版**：桌面窗口，带开始菜单 / 桌面快捷方式 |
+| Windows | `VideoSaver-x.y.z-windows-x64.zip` | **便携版 / 网页版**：免安装，解压即用 |
+| macOS（Apple Silicon） | `VideoSaver-x.y.z-macos-arm64.dmg` | 打开 dmg，把 `VideoSaver` 拖进 `Applications` |
+| Linux x64（Debian/Ubuntu） | `VideoSaver-x.y.z-linux-x64.deb` | `sudo apt install ./VideoSaver-x.y.z-linux-x64.deb`，装完有应用菜单 |
+| Linux x64（通用） | `VideoSaver-x.y.z-linux-x64.tar.gz` | 解压后运行 `VideoSaver/VideoSaver` |
 
-### macOS / Linux
+### 安装版和便携版有什么区别
 
-PyInstaller 不支持交叉编译，mac/Linux 包由 GitHub Actions 在对应系统上构建：
+|  | Setup 安装版 | Zip 便携版 |
+|---|---|---|
+| 运行方式 | 独立**桌面窗口**（WebView2，无浏览器地址栏） | 双击 `启动-网页版.bat`，在**默认浏览器**打开 `http://localhost:8765` |
+| 安装 | 写开始菜单 / 桌面快捷方式，可卸载 | 免安装，解压即用，删文件夹即卸载 |
+| 配置位置 | `%LOCALAPPDATA%\VideoSaver` | 默认也在 `%LOCALAPPDATA%`；在 exe 旁放空文件 `portable.txt` 就存程序目录 |
+| 适合 | 长期使用、想要独立窗口 | 临时使用、U 盘携带、或者就想在浏览器里用 |
 
-1. 打开 [build-all](https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml)；
-2. 点 **Run workflow**；
-3. 跑完在 artifact 里下载：
-   - `VideoSaver-macos-arm64`（zip，内含 `VideoSaver.app`）
-   - `VideoSaver-linux-x64`（tar.gz）
+> 便携版里直接双击 `VideoSaver.exe` 仍会尝试桌面窗口；想固定用网页版，就用 `启动-网页版.bat`。
 
-macOS 未签名版本首次打开会被 Gatekeeper 拦：右键 → 打开，或
+### macOS
+
+1. 打开 dmg，把 `VideoSaver` 拖进 `Applications`；
+2. 首次打开如果提示“未验证的开发者”，右键 → 打开，或：
 
 ```bash
-xattr -dr com.apple.quarantine VideoSaver.app
+xattr -dr com.apple.quarantine /Applications/VideoSaver.app
+```
+
+当前是 ad-hoc 签名，没有 Apple Developer 证书和公证；正式分发需要自己补签名。
+
+### Linux
+
+Debian / Ubuntu 推荐 `.deb`：
+
+```bash
+sudo apt install ./VideoSaver-1.5.4-linux-x64.deb
+```
+
+依赖会自动装 `python3-gi` 和 `gir1.2-webkit2-4.0`。装完在应用菜单里搜 VideoSaver。
+其它发行版用 tar.gz：
+
+```bash
+tar -xzf VideoSaver-1.5.4-linux-x64.tar.gz
+./VideoSaver/VideoSaver
 ```
 
 ## 从源码运行
@@ -55,7 +112,7 @@ python tools/fetch_bin.py        # 下载当前系统的 yt-dlp / ffmpeg / N_m3u
 python app_entry.py              # 或 python launch.py（Windows）
 ```
 
-> `python build_exe.py` 这类命令必须在**项目目录**里执行，不要在 `C:\Users\你的用户名` 下执行。
+> 所有构建命令都要在**项目目录**里执行，不要在 `C:\Users\你的用户名` 下执行。
 
 ## 打包
 
@@ -64,12 +121,12 @@ python app_entry.py              # 或 python launch.py（Windows）
 ```powershell
 cd VideoSaver
 python build_exe.py
-python build_installer.py --version 1.5.3
+python build_installer.py --version 1.5.4
 ```
 
-产物：`installer_out/VideoSaver-Setup-1.5.3.exe`、`dist/VideoSaver-1.5.3.zip`。
+产物：`installer_out/VideoSaver-Setup-1.5.4.exe`、`dist/VideoSaver-1.5.4.zip`。
 
-### macOS / Linux
+### macOS（.app + .dmg）
 
 ```bash
 pip install -r requirements-build.txt
@@ -77,12 +134,25 @@ python tools/fetch_bin.py
 python build_app.py
 ```
 
-产物在 `release/`。Linux 需要 WebKitGTK：
+`build_app.py` 会生成 `VideoSaver.app`、ad-hoc 签名、带 `Applications` 快捷方式的 `.dmg`，
+以及一个 zip。未公证的 app 首次打开需要右键 → 打开。
+
+### Linux（.deb + tar.gz）
 
 ```bash
 sudo apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config \
   python3-gi gir1.2-webkit2-4.0
+pip install -r requirements-build.txt
+python tools/fetch_bin.py
+python build_app.py
 ```
+
+产物在 `release/`：`.deb`（含桌面菜单和图标）和 `.tar.gz`。
+
+### CI 一次出三平台
+
+推 `v*` tag 或手动运行 [build-all](https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml)，
+三个 artifact：`windows-x64`、`macos-arm64`、`linux-x64`；tag 构建会自动挂到 Releases。
 
 更细的适配矩阵、已知限制见 [PORTABILITY.md](PORTABILITY.md)。
 
@@ -107,7 +177,15 @@ cp private_config.example.py private_config.py
 ```
 
 填入你的反馈中继地址和 token。`private_config.py` 已在 `.gitignore`，不会被提交。
-没有这个文件时，反馈功能会退回本机 SMTP / 未配置状态。
+
+## 赞助
+
+如果 VideoSaver 帮到了你，可以请作者喝杯咖啡。赞助完全自愿，不解锁任何功能，也不影响使用。
+
+- 把微信 / 支付宝赞赏码合并成一张 `donate.png` 放在程序目录，应用内「赞助」就会显示；
+- 或者先给项目点个 Star，这也是很实在的支持。
+
+细节见 [DONATE.md](DONATE.md)。
 
 ## 隐私
 
@@ -121,7 +199,7 @@ cp private_config.example.py private_config.py
 - **DRM 内容不支持**：腾讯/优酷会员片、Netflix 等是 Widevine/ChinaDRM 加密，本工具不绕过 DRM。
 - **腾讯免费片**可能被 CDN 按 IP 限速；程序会自动换线路/降档，仍不行就只能换网络。
 - **抖音/快手**依赖自建解析服务，单靠 Cookie 不够。
-- **macOS** 首版未做签名/公证；**Linux** 首版没有托盘，剪贴板复制文件仅 Windows 支持。
+- **macOS** 当前 ad-hoc 签名、未公证；**Linux** 首版没有托盘，剪贴板复制文件仅 Windows 支持。
 
 ## 免责声明
 

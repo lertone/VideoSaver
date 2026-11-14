@@ -35,3 +35,6 @@ docs/*.zip
 
 # 本地发布验证目录
 release_check*/
+
+# 个人赞赏码（想公开再删掉这一行）
+donate.png

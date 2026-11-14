@@ -1392,14 +1392,19 @@ def dir_history_add(path):
 
 
 def _find_exe(name):
-    """在 程序目录\\bin、程序目录\\vendor、程序目录、PATH 中查找可执行文件。"""
+    """在 程序目录 / _MEIPASS 的 bin、vendor、根目录以及 PATH 中查找可执行文件。"""
     exts = (".exe", "", ".cmd") if os.name == "nt" else ("",)
-    for folder in ("bin", "vendor", ""):
-        base = os.path.join(APP_DIR, folder) if folder else APP_DIR
-        for ext in exts:
-            cand = os.path.join(base, name + ext)
-            if os.path.isfile(cand):
-                return cand
+    bases = [APP_DIR]
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass and os.path.realpath(meipass) != os.path.realpath(APP_DIR):
+        bases.append(meipass)
+    for base0 in bases:
+        for folder in ("bin", "vendor", ""):
+            base = os.path.join(base0, folder) if folder else base0
+            for ext in exts:
+                cand = os.path.join(base, name + ext)
+                if os.path.isfile(cand):
+                    return cand
     return shutil.which(name) or ""
 
 

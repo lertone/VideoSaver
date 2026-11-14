@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -77,6 +78,39 @@ def pyi_args(version: str) -> list[str]:
     return args
 
 
+def stage_binaries() -> None:
+    """把 bin/ 放到运行时 APP_DIR/bin，并补可执行权限（mac/Linux）。"""
+    if IS_MAC:
+        roots = [os.path.join(DIST, "VideoSaver.app", "Contents", "MacOS")]
+    else:
+        roots = [os.path.join(DIST, "VideoSaver")]
+    src_dir = os.path.join(ROOT, "bin")
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        bin_dir = os.path.join(root, "bin")
+        os.makedirs(bin_dir, exist_ok=True)
+        for f in os.listdir(src_dir):
+            src = os.path.join(src_dir, f)
+            if not os.path.isfile(src):
+                continue
+            dst = os.path.join(bin_dir, f)
+            shutil.copy2(src, dst)
+            if not IS_WIN:
+                os.chmod(dst, os.stat(dst).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        # PyInstaller 也可能把 bin 放进 _internal；一并补权限
+        for r, _ds, fs in os.walk(root):
+            if os.path.basename(r) != "bin":
+                continue
+            for f in fs:
+                q = os.path.join(r, f)
+                try:
+                    os.chmod(q, os.stat(q).st_mode | stat.S_IXUSR)
+                except OSError:
+                    pass
+    print("bin/ 已放到运行时目录")
+
+
 def zip_dir(src: str, out: str, arc_root: str = "VideoSaver") -> None:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for r, ds, fs in os.walk(src):
@@ -98,6 +132,7 @@ def main() -> None:
     ensure_bin()
     os.makedirs(RELEASE, exist_ok=True)
     subprocess.check_call(pyi_args(version), cwd=ROOT)
+    stage_binaries()
 
     if IS_WIN:
         out = os.path.join(RELEASE, "VideoSaver-%s-%s.zip" % (version, tag))

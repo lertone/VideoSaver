@@ -8,6 +8,9 @@ on:
 env:
   PYTHONIOENCODING: utf-8
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:

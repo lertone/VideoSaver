@@ -13,6 +13,7 @@ import re
 import shutil
 import stat
 import sys
+import tarfile
 import urllib.request
 import zipfile
 
@@ -93,25 +94,43 @@ def fetch_nm3u8dl() -> None:
     api = "https://api.github.com/repos/nilaoda/N_m3u8DL-RE/releases/latest"
     data = json.loads(get(api, timeout=60).decode("utf-8"))
     if IS_WIN:
-        pat = re.compile(r"win-x64", re.I)
+        pat = re.compile(r"win[-_]?x64", re.I)
     elif IS_MAC:
-        pat = re.compile(r"osx-arm64", re.I) if ARCH in ("arm64", "aarch64") else re.compile(r"osx-x64", re.I)
+        pat = re.compile(r"(osx|macos)[-_]?(arm64|aarch64)", re.I) if ARCH in ("arm64", "aarch64") \
+              else re.compile(r"(osx|macos)[-_]?x64", re.I)
     else:
-        pat = re.compile(r"linux-arm64", re.I) if ARCH in ("aarch64", "arm64") else re.compile(r"linux-x64", re.I)
+        pat = re.compile(r"linux[-_]?(arm64|aarch64)", re.I) if ARCH in ("aarch64", "arm64") \
+              else re.compile(r"linux[-_]?(x64|amd64)", re.I)
     asset = next((a for a in data.get("assets", [])
-                  if pat.search(a.get("name", "")) and a.get("name", "").lower().endswith(".zip")), None)
+                  if pat.search(a.get("name", ""))
+                  and a.get("name", "").lower().endswith((".zip", ".tar.gz", ".tgz"))), None)
     if not asset:
-        raise SystemExit("找不到 N_m3u8DL-RE 的当前平台压缩包")
+        names = [a.get("name", "") for a in data.get("assets", [])]
+        raise SystemExit("找不到 N_m3u8DL-RE 的当前平台包；可选：\n" + "\n".join(names))
     print("下载", asset["name"])
     raw = get(asset["browser_download_url"], timeout=300)
-    with zipfile.ZipFile(io.BytesIO(raw)) as z:
-        for n in z.namelist():
-            base = os.path.basename(n)
-            if base.lower().endswith(name.lower()) or base == name:
-                with z.open(n) as src, open(dst, "wb") as out:
-                    shutil.copyfileobj(src, out)
-                chmod_x(dst)
-                return
+    fname = asset["name"].lower()
+
+    def _save(src):
+        with open(dst, "wb") as out:
+            shutil.copyfileobj(src, out)
+        chmod_x(dst)
+
+    if fname.endswith(".zip"):
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            for n in z.namelist():
+                if os.path.basename(n) == name:
+                    with z.open(n) as src:
+                        _save(src)
+                    return
+    else:
+        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as t:
+            for m in t.getmembers():
+                if m.isfile() and os.path.basename(m.name) == name:
+                    src = t.extractfile(m)
+                    if src:
+                        _save(src)
+                        return
     raise SystemExit("压缩包里没找到可执行文件：" + asset["name"])
 
 

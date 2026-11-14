@@ -1,0 +1,10 @@
+# 三平台打包依赖（在目标系统上 pip install -r 本文件）
+pyinstaller>=6.6
+pywebview>=5.0
+pillow>=10.0
+websocket-client>=1.7
+imageio-ffmpeg>=0.5
+pystray>=0.19; sys_platform == "win32"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+pyobjc-framework-WebKit>=10.0; sys_platform == "darwin"
+PyGObject>=3.46; sys_platform == "linux"

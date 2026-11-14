@@ -1,0 +1,34 @@
+# 构建产物
+build/
+dist/
+release/
+installer_out/
+*.spec
+*.exe
+*.zip
+*.tar.gz
+
+# 运行时 / 私人配置
+private_config.py
+.env
+config.json
+cookies/
+logs/
+data/
+*.db
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# 工具与系统
+bin/
+node_modules/
+.DS_Store
+Thumbs.db
+docs/_prof/
+docs/*.zip

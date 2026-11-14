@@ -519,7 +519,9 @@ def asset(name):
     打包后 index.html 可能躺在 exe 目录，也可能被 PyInstaller 放进 _MEIPASS，
     两处都找一遍；用户把 index.html 放在 exe 旁边还能直接改界面。
     """
-    bases = [APP_DIR]
+    # PyInstaller 6 的 onedir 会把 --add-data 放进 _internal；
+    # 某些版本 _MEIPASS 不指那里，所以显式补一条。
+    bases = [APP_DIR, os.path.join(APP_DIR, "_internal")]
     meipass = getattr(sys, "_MEIPASS", "")
     if meipass:
         bases.append(meipass)

@@ -32,3 +32,6 @@ node_modules/
 Thumbs.db
 docs/_prof/
 docs/*.zip
+
+# 本地发布验证目录
+release_check*/

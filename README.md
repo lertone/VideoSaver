@@ -172,9 +172,9 @@ python build_app.py
 
 - **Tikhub 托管（免服务器）**：设置 → 抖音解析服务，服务类型选 Tikhub，地址填
   `https://api.tikhub.io`，Key 填 Tikhub 的 API Token。按量计费，注册一般有试用额度。
-- **自建 DTK / 网关（免费，要服务器）**：原生 DTK（`/api/hybrid/video_data`）和网关
+- **本机跑 DTK / 网关（免费，不用买服务器）**：原生 DTK（`/api/hybrid/video_data`）和网关
   （`/api/v1/parse`）都支持；地址填**根地址**（如 `http://IP:8000`，不要带 `/api/...`）。
-  App 内「怎么接？两种方案」有完整的 Docker、`.env`、端口、建 Key、测试步骤。
+  普通用户本机装 Docker 就能跑；App 内「怎么接？两种方案」有完整步骤。服务器只是可选，适合 24 小时挂机或多设备共用。
 - 没有服务时其它网站不受影响。导入 Cookie 解决不了抖音的 `fresh_cookies`，别在这上面浪费时间。
 
 **B 站**：不接解析服务，继续用 yt-dlp + 登录 Cookie。B 站通常不额外加平台水印，
@@ -189,7 +189,7 @@ python build_app.py
 ### 本机 B 站 / 小红书 Cookie
 
 设置 → 网站登录信息 → 选中旧的 `bilibili.com.txt` / `xiaohongshu.com.txt` → 删除；
-重新导出浏览器 Cookie，用同名文件导入，User-Agent 填导出时那个浏览器的 UA，保存即可。
+重新导出浏览器 Cookie，用同名文件导入即可。1.5.6 的基本导入不强制 UA；只有带「身份/指纹」的高级弹窗才需要填导出时浏览器的 UA。
 旧文件会被覆盖，不用改其它设置。
 
 ### DTK 身份池里的 Cookie

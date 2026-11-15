@@ -81,8 +81,9 @@ CHANGELOG = [
     {"v": "1.5.6", "date": "2026-11-15",
      "items": [("优化", "抖音解析更稳：解析服务需要多等一会儿时，程序会自动等它完成，不再偶尔提示拿不到视频。"),
                ("新增", "小红书可以用 Tikhub 托管：不用自己搭服务器，复制分享链接就能下，支持无水印单文件。"),
-               ("优化", "设置里的解析服务教程重写：Tikhub 和自建服务分开讲，步骤更清楚。"),
-               ("优化", "「测一下服务通不通」会直接告诉你地址对不对、Key 有没有效。"),
+               ("优化", "「测一下服务通不通」现在会验证 Key 是否有效；删掉的 Key 不会再显示“已填可用”。"),
+               ("优化", "解析服务教程改成本机 Docker 优先：不用买服务器，装 Docker 就能跑；服务器只是可选。"),
+               ("优化", "导入登录 Cookie 不再强制填 UA，粘上保存就能用。"),
                ("说明", "B站继续用登录 Cookie：1080P 需要登录，4K/HDR 需要大会员。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
@@ -2366,6 +2367,40 @@ def _tikhub_xhs(url, endpoint, key):
         "height": h or None,
         "watermark": False,
     }, ""
+
+
+def _dy_check_key(endpoint, key, provider):
+    """只验证 Key/Token 是否有效，不解析真实内容。"""
+    ep = (endpoint or "").strip().rstrip("/")
+    if provider == "tikhub":
+        ep = ep or "https://api.tikhub.io"
+        try:
+            p = _dy_get_json(ep + "/api/v1/tikhub/user/get_user_info",
+                             {"Authorization": "Bearer " + key}, timeout=15)
+            if p.get("code") in (200, 0):
+                return True, ""
+            return False, str(p.get("message") or "Token 无效")[:120]
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                return False, "Tikhub Token 无效或已过期"
+            if e.code == 402:
+                return True, "Token 有效，但余额不足"
+            return False, _dy_http_reason(e)
+        except Exception as e:
+            return False, "Tikhub 连不上：%s" % str(e)[:80]
+    # dtk：用一个不会真正解析的探测值；401/403 = Key 无效，400/422/202 = Key 已通过
+    try:
+        _dy_post_json(ep + "/api/v1/parse", {"url": "__probe__"},
+                      {"X-API-Key": key}, timeout=20)
+        return True, ""
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return False, "Key 无效或已被删除"
+        if e.code in (400, 422):
+            return True, ""
+        return False, _dy_http_reason(e)
+    except Exception as e:
+        return False, "Key 验证失败：%s" % str(e)[:80]
 
 
 def resolve_douyin(url, cfg):
@@ -5197,9 +5232,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not endpoint.lower().startswith(("http://", "https://")):
             endpoint = "http://" + endpoint
         has_key = bool((dy.get("api_key") or "").strip())
-        if (dy.get("provider") or "dtk").lower() == "tikhub":
-            return self._send_json({"ok": True, "kind": "tikhub", "has_key": has_key,
-                                    "hint": "Tikhub 模式：保存后直接解析一条抖音验证（测试接口会消耗额度）"})
+        provider = (dy.get("provider") or "dtk").lower()
+        key = (dy.get("api_key") or "").strip()
+        if provider == "tikhub":
+            if not has_key:
+                return self._send_json({"ok": False, "kind": "tikhub",
+                                        "error": "还没填 Tikhub Token"})
+            key_ok, key_msg = _dy_check_key(endpoint, key, "tikhub")
+            return self._send_json({"ok": key_ok, "kind": "tikhub", "has_key": True,
+                                    "key_ok": key_ok,
+                                    "error": "" if key_ok else key_msg,
+                                    "hint": "Tikhub Token 有效" if key_ok else ""})
         last = ""
         try:
             opener = proxy_opener(endpoint + "/readyz", timeout=12)
@@ -5210,8 +5253,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if bad:
                 return self._send_json({"ok": False, "kind": "gateway",
                                         "error": "服务在线但组件异常：" + ", ".join(bad)})
+            if has_key:
+                key_ok, key_msg = _dy_check_key(endpoint, key, "dtk")
+                if not key_ok:
+                    return self._send_json({"ok": False, "kind": "gateway",
+                                            "error": "网关在线，但 " + key_msg})
             return self._send_json({"ok": True, "kind": "gateway", "status": data.get("status"),
-                                    "components": list(comp.keys()), "has_key": has_key})
+                                    "components": list(comp.keys()), "has_key": has_key,
+                                    "key_ok": has_key})
         except Exception as e:
             last = str(e)[:100]
 
@@ -5225,8 +5274,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send_json({"ok": True, "kind": "native", "has_key": has_key,
                                         "hint": "原生 DTK 在线，本版本已兼容"})
             if "/api/v1/parse" in paths:
+                if has_key:
+                    key_ok, key_msg = _dy_check_key(endpoint, key, "dtk")
+                    if not key_ok:
+                        return self._send_json({"ok": False, "kind": "gateway",
+                                                "error": "网关在线，但 " + key_msg})
                 return self._send_json({"ok": True, "kind": "gateway", "has_key": has_key,
-                                        "hint": "网关在线"})
+                                        "key_ok": has_key, "hint": "网关在线"})
             return self._send_json({"ok": False,
                                     "error": "这是 FastAPI，但没有解析接口；确认填的是网关/DTK 根地址"})
         except Exception as e:

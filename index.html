@@ -2618,9 +2618,9 @@
               不适合完全零成本；余额/权限问题会返回 401/402/403。</li>
           </ol>
 
-          <h4 style="margin:14px 0 6px">方案 B：自建 DTK（免费，但要一台服务器）</h4>
+          <h4 style="margin:14px 0 6px">方案 B：本机跑 DTK（免费，不用买服务器）</h4>
           <ol class="steps">
-            <li>准备一台 1 核 2G 的 Linux（建议海外/香港），装 Docker 和 Compose v2.24+。</li>
+            <li>装 Docker Desktop（Windows / macOS）或 Docker Engine（Linux），Compose v2.24+ 会一起装。普通用户本机跑就够，不需要买服务器；服务器只是可选，适合 24 小时挂机或多设备共用。</li>
             <li><b>拉代码</b>
               <pre class="cmd" data-copy="git clone https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git&#10;cd Douyin_TikTok_Download_API">git clone https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git
 cd Douyin_TikTok_Download_API</pre>
@@ -2633,18 +2633,22 @@ cd Douyin_TikTok_Download_API</pre>
               </div>
             </li>
             <li><b>启动</b>
-              <pre class="cmd" data-copy="COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300">COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300</pre>
+              <pre class="cmd" data-copy="PowerShell：$env:COMPOSE_ENV_FILES=&quot;.env&quot;; docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300&#10;macOS / Linux：COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300">PowerShell：
+$env:COMPOSE_ENV_FILES=".env"; docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300
+
+macOS / Linux：
+COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300</pre>
               <div class="note" style="font-size:11px;margin:4px 0 0">
                 等所有容器 healthy；<code>docker compose -p dtk ps</code> 可以看状态。
               </div>
             </li>
-            <li><b>让外部能访问</b>：默认只监听 <code>127.0.0.1:8000</code>。
-              要远程访问，把映射改成 <code>0.0.0.0:8000</code> 并放行防火墙/安全组；
-              或者前面挂 Nginx/Caddy 做 HTTPS。不要把 8000 裸奔到公网还不设 Key。</li>
-            <li><b>创建 API Key</b>：浏览器打开 <code>http://IP:8000</code> 控制台，
+            <li><b>本机用</b>：保持 <code>127.0.0.1:8000</code> 就行，不用改防火墙。
+              要给别的设备用，再把映射改成 <code>0.0.0.0:8000</code> 并放行端口；
+              或者放服务器/挂 Nginx。不要把 8000 裸奔到公网还不设 Key。</li>
+            <li><b>创建 API Key</b>：浏览器打开 <code>http://127.0.0.1:8000</code> 控制台，
               在 API Keys 页面创建一个 <code>dtk_</code> 开头的 Key。</li>
             <li><b>回到这里</b>：服务类型选 <b>自建 DTK / 网关</b>；地址填
-              <code>http://IP:8000</code>（根地址，不要带 <code>/api/...</code>）；Key 贴进去；
+              <code>http://127.0.0.1:8000</code>（根地址，不要带 <code>/api/...</code>）；Key 贴进去；
               点「测一下服务通不通」，通过后保存。</li>
             <li><b>第一次解析</b>：在控制台/身份池放一个已登录的抖音 Cookie，成功率和画质会更高。
               本机不用导入抖音 Cookie。</li>

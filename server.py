@@ -79,11 +79,11 @@ APP_DATE = "2026-11-13"
 
 CHANGELOG = [
     {"v": "1.5.6", "date": "2026-11-15",
-     "items": [("新增", "抖音解析同时兼容原生 DTK（/api/hybrid/video_data）、网关（/api/v1/parse），以及 Tikhub 托管（免服务器，按量计费）。"),
-               ("修复", "dtk 返回 202 + task_id 时自动轮询 /api/v1/tasks/{id}，并解开 data.data，不再误报「没给出直链」。"),
-               ("优化", "「测一下服务通不通」能识别原生 DTK / 网关 / Tikhub / 误填的静态网页；501、403、404、401 会直接说明原因。"),
-               ("新增", "B站 可走 DTK（Key 需开 B站权限），失败自动回退 yt-dlp + Cookie；小红书 可走 Tikhub app_v2，直接拿单文件 MP4。"),
-               ("优化", "抖音说明重写：Tikhub、自建 DTK（完整 Docker/端口/建 Key 步骤）、只下 B 站/小红书 三种方案分开讲。")]},
+     "items": [("优化", "抖音解析更稳：解析服务需要多等一会儿时，程序会自动等它完成，不再偶尔提示拿不到视频。"),
+               ("新增", "小红书可以用 Tikhub 托管：不用自己搭服务器，复制分享链接就能下，支持无水印单文件。"),
+               ("优化", "设置里的解析服务教程重写：Tikhub 和自建服务分开讲，步骤更清楚。"),
+               ("优化", "「测一下服务通不通」会直接告诉你地址对不对、Key 有没有效。"),
+               ("说明", "B站继续用登录 Cookie：1080P 需要登录，4K/HDR 需要大会员。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
                ("优化", "README 的网页版截图裁掉浏览器标签栏，保存路径打码；补充桌面版与网页版对比说明。"),
@@ -1882,11 +1882,6 @@ KUAISHOU_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
 def is_kuaishou(url):
     host = (urllib.parse.urlsplit(url).hostname or "").lower()
     return "kuaishou.com" in host or "chenzhongtech.com" in host
-
-
-def is_bilibili(url):
-    host = (urllib.parse.urlsplit(url).hostname or "").lower()
-    return "bilibili.com" in host or host == "b23.tv"
 
 
 def is_xiaohongshu(url):
@@ -5509,27 +5504,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     else:
                         self._write("[抖音] 解析服务没成功：%s\n" % why)
                         self._write("[抖音] 退回本地引擎再试一次（大概率还是失败）…\n")
-                elif is_bilibili(origin_url) and douyin_ready(cfg) and dy_provider == "dtk":
-                    # B 站走 DTK 的 /api/v1/parse；Key 需要单独开 B 站权限
-                    self._write("[B站] 正在通过解析服务取直链…\n")
-                    info, why = resolve_douyin(origin_url, cfg)
-                    if info:
-                        dtk = info
-                        url = info["url"]
-                        dtk_referer = "https://www.bilibili.com/"
-                        dtk_ua = DTK_UA
-                        w, h = info.get("width"), info.get("height")
-                        self._write("[B站] 直链已拿到%s\n"
-                                    % ((" · %sx%s" % (w, h)) if w and h else ""))
-                        dtk_title = safe_filename(info.get("title") or "")
-                        if dtk_title:
-                            self._write("[B站] 标题：%s\n" % dtk_title)
-                    else:
-                        self._write("[B站] 解析服务没成功：%s\n" % why)
-                        self._write("[B站] 回退本地引擎 + Cookie…\n")
-                elif is_bilibili(origin_url) and dy_provider == "tikhub":
-                    self._write("[B站] Tikhub 当前只返回 DASH 分轨（480P/360P），"
-                                "本版不接；走本地引擎 + Cookie。要更高画质请用开了 B站权限的 DTK。\n")
                 elif is_xiaohongshu(origin_url) and dy_provider == "tikhub" and douyin_ready(cfg):
                     self._write("[小红书] 正在通过 Tikhub 取直链…\n")
                     info, why = _tikhub_xhs(origin_url,

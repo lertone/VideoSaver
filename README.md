@@ -177,51 +177,12 @@ python build_app.py
   App 内「怎么接？两种方案」有完整的 Docker、`.env`、端口、建 Key、测试步骤。
 - 没有服务时其它网站不受影响。导入 Cookie 解决不了抖音的 `fresh_cookies`，别在这上面浪费时间。
 
-**B 站**：可选走 DTK（Key 要单独开 B 站权限），解析失败自动回退 yt-dlp + Cookie。
-B 站本身通常不加水印，画质取决于 DTK 的身份池/你的账号；1080P 要登录，4K/HDR 要大会员。
+**B 站**：不接解析服务，继续用 yt-dlp + 登录 Cookie。B 站通常不额外加平台水印，
+看到的多是 UP 主自己烧的；1080P 通常要登录，4K/HDR 和部分清晰度要大会员。
+登录 Cookie 解决的是风控与登录可见内容，不改变账号本身的画质权益。
 
 **小红书**：Tikhub 模式走 `app_v2/get_video_note_detail`，直接拿单文件 MP4（实测 1080×1440）。
-DTK 不支持小红书；失败回退 yt-dlp + Cookie。图文笔记没有视频文件。
-
-**Tikhub 的 B 站接口**目前只返回 480P/360P 的 DASH 分轨，本版没接；要 B 站高画质请用 DTK
-（B 站权限 Key）或 yt-dlp + 登录 Cookie。
-
-### 反馈中继（可选）
-
-开源仓库**不含**任何私人中继地址或 token。本地构建时复制：
-
-```bash
-cp private_config.example.py private_config.py
-```
-
-填入你的反馈中继地址和 token。`private_config.py` 已在 `.gitignore`，不会被提交。
-
-## 赞助
-
-如果 VideoSaver 帮到了你，可以请作者喝杯咖啡。赞助完全自愿，不解锁任何功能，也不影响使用。
-
-应用内「赞助」已内置支付宝 / 微信赞赏码，点顶栏「赞助」即可切换。二维码由收款链接重新生成，
-已去掉海报上的姓名和头像，只保留可扫描的二维码本体和 VideoSaver logo。
-
-<p align="center"><img src="donate.png" width="420" alt="赞赏码"></p>
-
-赞助完全自愿，不解锁任何功能。也可以先给项目点个 Star。
-
-细节见 [DONATE.md](DONATE.md)。
-
-## 隐私
-
-- 下载文件、配置、Cookie 都只在本机。
-- 没有账号、没有统计上报。
-- 反馈是用户主动点击才发送；内容只有反馈文字、版本和系统类型。
-- 仓库不包含任何人的 SMTP 授权码、管理员 token、Cookie、日志或下载记录。
-
-## 已知限制
-
-- **DRM 内容不支持**：腾讯/优酷会员片、Netflix 等是 Widevine/ChinaDRM 加密，本工具不绕过 DRM。
-- **腾讯免费片**可能被 CDN 按 IP 限速；程序会自动换线路/降档，仍不行就只能换网络。
-- **抖音/快手**依赖自建解析服务，单靠 Cookie 不够。
-- **macOS** 当前 ad-hoc 签名、未公证；**Linux** 首版没有托盘，剪贴板复制文件仅 Windows 支持。
+图文笔记没有视频文件；失败回退 yt-dlp + Cookie。
 
 ## 免责声明
 

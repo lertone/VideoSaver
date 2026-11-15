@@ -2571,12 +2571,12 @@
       </div>
 
       <div class="group">
-        <h3>外部解析服务（抖音 / B站 / 小红书）</h3>
+        <h3>外部解析服务（抖音 / 小红书）</h3>
         <details>
           <summary>这是什么？点开看说明</summary>
           <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:10px">
             抖音分享页带设备指纹（UIFID），本地引擎算不出签名，所以要接外部解析服务。
-          B站 可以走开了 B站权限的 DTK；小红书可以走 Tikhub（app_v2 单文件）。
+          B站继续用登录 Cookie；小红书可以走 Tikhub（单文件，免服务器）。
             （开源项目 Evil0ctal/Douyin_TikTok_Download_API）拿无水印直链。<br>
             <span style="color:var(--muted)">不填也能下别的网站，只是抖音会失败。</span>
           </div>
@@ -2662,7 +2662,7 @@ cd Douyin_TikTok_Download_API</pre>
             <b>报错对照：</b><br>
             501 / 返回网页 = 填了静态网页或前端端口，不是 API；<br>
             401 = Key 无效/过期；<br>
-            403 = Key 没有这个平台的权限（比如只有抖音权限，却去解 B 站）；<br>
+            403 = Key 没有对应平台的权限，或服务端没开这个站点；<br>
             404 = 路径不对，通常是把 <code>/api/...</code> 也填进了地址。
           </div>
         </details>

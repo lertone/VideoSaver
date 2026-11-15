@@ -79,9 +79,10 @@ APP_DATE = "2026-11-13"
 
 CHANGELOG = [
     {"v": "1.5.6", "date": "2026-11-15",
-     "items": [("新增", "抖音解析同时兼容原生 DTK（/api/hybrid/video_data）和网关（/api/v1/parse），不再只认一种接口。"),
-               ("优化", "「测一下服务通不通」能识别原生 DTK / 网关 / 误填的静态网页；501、404、401 会直接说明原因。"),
-               ("优化", "抖音说明里明确：不要靠导入 Cookie 解决，yt-dlp 本地引擎生成不了签名，必须走解析服务。")]},
+     "items": [("新增", "抖音解析同时兼容原生 DTK（/api/hybrid/video_data）、网关（/api/v1/parse），以及 Tikhub 托管（免服务器，按量计费）。"),
+               ("修复", "dtk 返回 202 + task_id 时自动轮询 /api/v1/tasks/{id}，并解开 data.data，不再误报「没给出直链」。"),
+               ("优化", "「测一下服务通不通」能识别原生 DTK / 网关 / Tikhub / 误填的静态网页；501、403、404、401 会直接说明原因。"),
+               ("优化", "抖音说明重写：Tikhub、自建 DTK（完整 Docker/端口/建 Key 步骤）、只下 B 站/小红书 三种方案分开讲。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
                ("优化", "README 的网页版截图裁掉浏览器标签栏，保存路径打码；补充桌面版与网页版对比说明。"),
@@ -1575,6 +1576,7 @@ DEFAULT_CONFIG = {
         "endpoint": "",
         "api_key": "",
         "user_agent": "",
+        "provider": "dtk",          # dtk = 自建网关/DTK；tikhub = 托管 API
     },
     "youtube": {
         # 自定义 player_client 已被 YouTube 停用，会让格式列表为空；默认交给引擎自选
@@ -2132,6 +2134,40 @@ def _dy_post_json(api, body, headers, timeout=45):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
+def _dy_get_json(api, headers, timeout=20):
+    req = urllib.request.Request(api, method="GET")
+    req.add_header("User-Agent", DTK_UA)
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    opener = proxy_opener(api, timeout=timeout)
+    with opener.open(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _dy_poll_task(endpoint, key, task_id, timeout=45):
+    """dtk 可能返回 202 + task_id；轮询到 done 再取 data.data。"""
+    deadline = time.time() + timeout
+    last = ""
+    while time.time() < deadline:
+        try:
+            task = _dy_get_json(endpoint + "/api/v1/tasks/" + task_id,
+                                {"X-API-Key": key}, timeout=15)
+        except Exception as e:
+            last = str(e)[:80]
+            time.sleep(1.2)
+            continue
+        data = task.get("data") or {}
+        state = str(data.get("state") or "").lower()
+        if state in ("done", "succeeded", "success"):
+            return task, ""
+        if state in ("failed", "error", "cancelled"):
+            err = (data.get("error") or {}).get("message") if isinstance(data.get("error"), dict) else ""
+            return None, "解析任务失败：%s" % (err or state)
+        last = state or "queued"
+        time.sleep(1.2)
+    return None, "解析任务超时（%s）" % (last or "无状态")
+
+
 def _dy_extract_url(obj):
     """从原生 DTK 的 JSON 里递归找 play_addr/download_addr 的 url_list。"""
     if isinstance(obj, dict):
@@ -2155,6 +2191,9 @@ def _dy_extract_url(obj):
 
 def _dy_parse_gateway(payload):
     item = payload.get("data") or {}
+    # 异步任务结果：{"data": {"task_id":..., "state":"done", "data": {...}}}
+    if isinstance(item.get("data"), dict) and ("media" in item["data"] or "kind" in item["data"]):
+        item = item["data"]
     media = (item.get("media") or {}).get("video") or {}
     direct = media.get("url") or next(iter(media.get("urls") or []), "")
     if not direct:
@@ -2210,6 +2249,62 @@ def _dy_http_reason(e):
     return "HTTP %d%s" % (e.code, ("：" + body) if body else "")
 
 
+def _douyin_aweme_id(url):
+    """从分享链接/短链里取 aweme_id（Tikhub 用）。"""
+    m = re.search(r"/(?:video|note)/(\d{8,})", url)
+    if m:
+        return m.group(1)
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"User-Agent": DTK_UA})
+        opener = proxy_opener(url, timeout=15)
+        with opener.open(req, timeout=15) as r:
+            final = r.geturl()
+    except Exception:
+        return ""
+    m = re.search(r"/(?:video|note)/(\d{8,})", final) or re.search(r"modal_id=(\d{8,})", final)
+    return m.group(1) if m else ""
+
+
+def _tikhub_douyin(url, endpoint, key):
+    """Tikhub 托管抖音接口；免服务器，按量计费。"""
+    aweme = _douyin_aweme_id(url)
+    if not aweme:
+        return None, "无法从分享链接提取抖音作品 ID"
+    base = (endpoint or "https://api.tikhub.io").rstrip("/")
+    paths = [
+        "/api/v1/douyin/app/v3/fetch_one_video_v3?aweme_id=" + aweme,
+        "/api/v1/douyin/app/v3/fetch_one_video?aweme_id=" + aweme,
+        "/api/v1/douyin/web/fetch_one_video?aweme_id=" + aweme,
+    ]
+    errors = []
+    for path in paths:
+        try:
+            payload = _dy_get_json(base + path,
+                                   {"Authorization": "Bearer " + key}, timeout=40)
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return None, "Tikhub token 无效（HTTP 401）"
+            if e.code == 402:
+                return None, "Tikhub 余额不足（HTTP 402）"
+            if e.code in (404, 405):
+                errors.append("HTTP %d" % e.code)
+                continue
+            errors.append(_dy_http_reason(e))
+            continue
+        except Exception as e:
+            errors.append(str(e)[:80])
+            continue
+        code = payload.get("code")
+        if code not in (200, 0, None):
+            errors.append(str(payload.get("message") or code)[:80])
+            continue
+        info, why = _dy_parse_native(payload)
+        if info:
+            return info, ""
+        errors.append(why)
+    return None, "Tikhub 解析失败：" + "；".join(errors)[:180]
+
+
 def resolve_douyin(url, cfg):
     """调自建解析服务拿无水印直链。
 
@@ -2220,12 +2315,17 @@ def resolve_douyin(url, cfg):
     dy = cfg.get("douyin") or {}
     endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
     key = (dy.get("api_key") or "").strip()
+    provider = (dy.get("provider") or "dtk").lower()
+    if provider == "tikhub" and not endpoint:
+        endpoint = "https://api.tikhub.io"
     if not endpoint:
         return None, "没配置解析服务地址（设置 → 抖音解析服务）"
     if not key:
         return None, "没填 API Key（设置 → 抖音解析服务）"
     if not endpoint.lower().startswith(("http://", "https://")):
         endpoint = "http://" + endpoint
+    if provider == "tikhub":
+        return _tikhub_douyin(url, endpoint, key)
 
     errors = []
 
@@ -2234,10 +2334,19 @@ def resolve_douyin(url, cfg):
         payload = _dy_post_json(endpoint + "/api/v1/parse?wait=25",
                                 {"url": url}, {"X-API-Key": key}, timeout=45)
         if payload.get("success"):
-            info, why = _dy_parse_gateway(payload)
+            task_id = (payload.get("data") or {}).get("task_id")
+            if task_id and not (payload.get("data") or {}).get("media"):
+                task, why = _dy_poll_task(endpoint, key, str(task_id), timeout=45)
+                if task:
+                    payload = task
+                else:
+                    errors.append("网关：" + why)
+                    payload = {"success": False}
+            info, why = _dy_parse_gateway(payload) if payload.get("success") else (None, "")
             if info:
                 return info, ""
-            errors.append("网关：" + why)
+            if why:
+                errors.append("网关：" + why)
         else:
             err = ((payload.get("error") or {}).get("message")
                    or (payload.get("error") or {}).get("code") or "未知错误")
@@ -5025,6 +5134,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not endpoint.lower().startswith(("http://", "https://")):
             endpoint = "http://" + endpoint
         has_key = bool((dy.get("api_key") or "").strip())
+        if (dy.get("provider") or "dtk").lower() == "tikhub":
+            return self._send_json({"ok": True, "kind": "tikhub", "has_key": has_key,
+                                    "hint": "Tikhub 模式：保存后直接解析一条抖音验证（测试接口会消耗额度）"})
         last = ""
         try:
             opener = proxy_opener(endpoint + "/readyz", timeout=12)

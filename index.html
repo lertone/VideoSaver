@@ -2581,6 +2581,13 @@
           </div>
         </details>
         <div class="field" style="margin-top:10px">
+          <label>服务类型</label>
+          <select id="dyProvider">
+            <option value="dtk">自建 DTK / 网关（免费，要服务器）</option>
+            <option value="tikhub">Tikhub 托管（免服务器，按量付费）</option>
+          </select>
+        </div>
+        <div class="field">
           <label>服务地址</label>
           <input type="text" id="dyEndpoint" placeholder="例如 http://127.0.0.1:8000（填根地址，不要带 /api/...）" />
         </div>
@@ -2593,17 +2600,26 @@
         </div>
         <div class="statusline" id="dyStatus"></div>
         <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:8px">
-          原生 DTK 和网关都支持：本工具会先试 <code>/api/v1/parse</code>，再试原生
-          <code>/api/hybrid/video_data</code>。地址填根地址（如 <code>http://IP:8000</code>），
-          不要带 <code>/api/...</code>。测服务返回 501 / 网页，说明填成了静态服务器或前端端口。
+          自建 DTK / 网关 / Tikhub 托管都支持。地址填<b>根地址</b>（如 <code>http://IP:8000</code>
+          或 <code>https://api.tikhub.io</code>），不要带 <code>/api/...</code>。
+          测服务返回 501 / 网页，说明填成了静态服务器或前端端口。
         </div>
         <details style="margin-top:10px">
-          <summary>怎么部署？三步，命令可直接点一下复制</summary>
-          <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:10px">
-            需要一台能跑 Docker 的服务器（1 核 2G 起，建议海外或香港）。没有域名也可以，
-            最后用 <code>http://服务器IP:8000</code> 就行（根地址，不要带 <code>/api/...</code>）。
-          </div>
+          <summary>怎么接？两种方案，步骤写全了</summary>
+
+          <h4 style="margin:14px 0 6px">方案 A：Tikhub 托管（普通人推荐，免服务器）</h4>
           <ol class="steps">
+            <li>注册 <a href="https://www.tikhub.io" target="_blank" rel="noopener">tikhub.io</a>，
+              在用户中心 → API Keys 创建一个 Token。</li>
+            <li>上面「服务类型」选 <b>Tikhub 托管</b>；地址填 <code>https://api.tikhub.io</code>；
+              Key 填 Tikhub 的 Token（不是 dtk_ 开头）。</li>
+            <li>保存后粘一条抖音链接试。Tikhub 是<b>按量计费</b>，注册一般有试用额度，
+              不适合完全零成本；余额/权限问题会返回 401/402/403。</li>
+          </ol>
+
+          <h4 style="margin:14px 0 6px">方案 B：自建 DTK（免费，但要一台服务器）</h4>
+          <ol class="steps">
+            <li>准备一台 1 核 2G 的 Linux（建议海外/香港），装 Docker 和 Compose v2.24+。</li>
             <li><b>拉代码</b>
               <pre class="cmd" data-copy="git clone https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git&#10;cd Douyin_TikTok_Download_API">git clone https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git
 cd Douyin_TikTok_Download_API</pre>
@@ -2611,18 +2627,42 @@ cd Douyin_TikTok_Download_API</pre>
             <li><b>准备配置</b>
               <pre class="cmd" data-copy="cp .env.example .env">cp .env.example .env</pre>
               <div class="note" style="font-size:11px;margin:4px 0 0">
-                打开 <code>.env</code>，填 <code>DTK_SECRET_KEY</code>、PostgreSQL 和 Redis 的密码。
+                打开 <code>.env</code>，至少填 <code>DTK_SECRET_KEY</code>（随机长串）、
+                <code>POSTGRES_PASSWORD</code>、<code>REDIS_PASSWORD</code>。密码别用默认值。
               </div>
             </li>
-            <li><b>启动（Docker Compose v2.24+）</b>
+            <li><b>启动</b>
               <pre class="cmd" data-copy="COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300">COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait --wait-timeout 300</pre>
+              <div class="note" style="font-size:11px;margin:4px 0 0">
+                等所有容器 healthy；<code>docker compose -p dtk ps</code> 可以看状态。
+              </div>
             </li>
+            <li><b>让外部能访问</b>：默认只监听 <code>127.0.0.1:8000</code>。
+              要远程访问，把映射改成 <code>0.0.0.0:8000</code> 并放行防火墙/安全组；
+              或者前面挂 Nginx/Caddy 做 HTTPS。不要把 8000 裸奔到公网还不设 Key。</li>
+            <li><b>创建 API Key</b>：浏览器打开 <code>http://IP:8000</code> 控制台，
+              在 API Keys 页面创建一个 <code>dtk_</code> 开头的 Key。</li>
+            <li><b>回到这里</b>：服务类型选 <b>自建 DTK / 网关</b>；地址填
+              <code>http://IP:8000</code>（根地址，不要带 <code>/api/...</code>）；Key 贴进去；
+              点「测一下服务通不通」，通过后保存。</li>
+            <li><b>第一次解析</b>：在控制台/身份池放一个已登录的抖音 Cookie，成功率和画质会更高。
+              本机不用导入抖音 Cookie。</li>
           </ol>
-          <div class="note" style="font-size:11px;line-height:1.7">
-            默认只监听 <code>127.0.0.1:8000</code>；要让别的电脑访问，把它改成 <code>0.0.0.0:8000</code>
-            并放行安全组端口，或前面挂一层 Nginx/Caddy 做 HTTPS。<br>
-            打开控制台生成 <code>dtk_</code> 开头的 API Key，回到上面填地址 + Key，点「测一下服务通不通」。<br>
-            第一次解析前，建议在控制台或配置里放一个已登录的抖音 Cookie，成功率会高很多。
+
+          <h4 style="margin:14px 0 6px">方案 C：只下 B 站 / 小红书</h4>
+          <p class="note" style="font-size:11.5px;line-height:1.7">
+            不需要抖音解析。到「网站登录信息」导入对应站点的 Cookie 即可。
+            画质取决于账号/VIP（B 站 1080P 要登录、4K/HDR 要大会员），
+            水印取决于平台和作者，不能保证去掉。抖音的 <code>fresh_cookies</code>
+            不是 Cookie 问题，必须走上面的解析服务。
+          </p>
+
+          <div class="note" style="font-size:11px;line-height:1.8;margin-top:10px">
+            <b>报错对照：</b><br>
+            501 / 返回网页 = 填了静态网页或前端端口，不是 API；<br>
+            401 = Key 无效/过期；<br>
+            403 = Key 没有这个平台的权限（比如只有抖音权限，却去解 B 站）；<br>
+            404 = 路径不对，通常是把 <code>/api/...</code> 也填进了地址。
           </div>
         </details>
         <details style="margin-top:8px">
@@ -3078,6 +3118,7 @@ cd Douyin_TikTok_Download_API</pre>
         mode: $("cookieMode").value, browser: $("cookieBrowser").value, file: $("cookieFile").value
       },
       douyin: {
+        provider: $("dyProvider").value,
         endpoint: $("dyEndpoint").value.trim(),
         api_key: $("dyKey").value.trim(),
         user_agent: $("dyUA").value.trim()
@@ -3099,6 +3140,7 @@ cd Douyin_TikTok_Download_API</pre>
       $("autoRetry").checked = !!c.proxy.auto_retry;
       loadYtdlp();
       const dy = c.douyin || {};
+      $("dyProvider").value = dy.provider || "dtk";
       $("dyEndpoint").value = dy.endpoint || "";
       $("dyKey").value = dy.api_key || "";
       $("dyUA").value = dy.user_agent || "";
@@ -4528,13 +4570,26 @@ cd Douyin_TikTok_Download_API</pre>
   }
   $("ytdlpUpdateBtn").onclick = updateYtdlp;
 
+  $("dyProvider").onchange = () => {
+    const t = $("dyProvider").value === "tikhub";
+    $("dyEndpoint").placeholder = t ? "https://api.tikhub.io"
+      : "例如 http://127.0.0.1:8000（根地址，不要带 /api/...）";
+    $("dyKey").placeholder = t ? "Tikhub API Token"
+      : "dtk_xxxxx（控制台 → API Keys）";
+  };
   $("dyTest").onclick = async () => {
     setLine("dyStatus", "正在连…", "");
     await saveSettings(true);
     const j = await api("/api/douyin/test", {});
     if (j.ok) {
-      setLine("dyStatus", "✓ 服务在线（" + (j.components || []).join(" / ") + "）" +
-        (j.has_key ? "，已填 Key" : "，但还没填 API Key"), j.has_key ? "ok" : "");
+      if (j.kind === "tikhub") {
+        setLine("dyStatus", "✓ " + (j.hint || "Tikhub 模式已保存") +
+          (j.has_key ? "" : "；但还没填 Token"), j.has_key ? "ok" : "");
+      } else {
+        const kind = j.kind === "native" ? "原生 DTK" : (j.kind === "gateway" ? "网关" : "服务");
+        setLine("dyStatus", "✓ " + kind + "在线" + (j.hint ? "；" + j.hint : "") +
+          (j.has_key ? "，已填 Key" : "，但还没填 API Key"), j.has_key ? "ok" : "");
+      }
     } else {
       setLine("dyStatus", "✗ " + (j.error || "连不上"), "bad");
     }

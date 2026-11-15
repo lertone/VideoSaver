@@ -168,10 +168,17 @@ python build_app.py
 
 ### 抖音解析
 
-抖音分享页有设备指纹，本地算不出签名，必须接解析服务。原生
-[DTK](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)（`/api/hybrid/video_data`）和网关
-（`/api/v1/parse`）都支持：在设置 → 抖音解析服务里填**根地址**（如 `http://IP:8000`，不要带 `/api/...`）
-和 API Key。没有服务时其它网站不受影响。导入 Cookie 解决不了抖音的 `fresh_cookies`，别在这上面浪费时间。
+抖音分享页有设备指纹，本地算不出签名，必须接解析服务。三种方式：
+
+- **Tikhub 托管（免服务器）**：设置 → 抖音解析服务，服务类型选 Tikhub，地址填
+  `https://api.tikhub.io`，Key 填 Tikhub 的 API Token。按量计费，注册一般有试用额度。
+- **自建 DTK / 网关（免费，要服务器）**：原生 DTK（`/api/hybrid/video_data`）和网关
+  （`/api/v1/parse`）都支持；地址填**根地址**（如 `http://IP:8000`，不要带 `/api/...`）。
+  App 内「怎么接？两种方案」有完整的 Docker、`.env`、端口、建 Key、测试步骤。
+- 没有服务时其它网站不受影响。导入 Cookie 解决不了抖音的 `fresh_cookies`，别在这上面浪费时间。
+
+B 站 / 小红书目前仍走 yt-dlp + 对应站点的 Cookie：B 站 1080P 要登录、4K/HDR 要大会员；
+小红书无水印/高画质取决于作品本身和登录态，不能保证。抖音解析服务不负责这两个站。
 
 ### 反馈中继（可选）
 

@@ -47,7 +47,7 @@ python build_installer.py --version 1.5.3
 pip install -r requirements-build.txt
 python tools/fetch_bin.py
 python build_app.py
-# 产物：release/VideoSaver-1.5.5-macos-arm64.dmg（拖进 Applications）和 .zip（内含 VideoSaver.app）
+# 产物：release/VideoSaver-1.5.6-macos-arm64.dmg（拖进 Applications）和 .zip（内含 VideoSaver.app）
 ```
 
 未签名/未公证的 `.app` 首次打开会被 Gatekeeper 拦：右键 → 打开，或
@@ -61,7 +61,7 @@ sudo apt-get install -y libgirepository1.0-dev libcairo2-dev pkg-config \
 pip install -r requirements-build.txt
 python tools/fetch_bin.py
 python build_app.py
-# 产物：release/VideoSaver-1.5.5-linux-x64.deb（应用菜单 + 图标）和 .tar.gz
+# 产物：release/VideoSaver-1.5.6-linux-x64.deb（应用菜单 + 图标）和 .tar.gz
 ```
 
 如果 `PyGObject` 装不上，用系统 Python 的 `python3-gi`，或改用 Qt 后端

@@ -93,14 +93,14 @@ xattr -dr com.apple.quarantine /Applications/VideoSaver.app
 Debian / Ubuntu 推荐 `.deb`：
 
 ```bash
-sudo apt install ./VideoSaver-1.5.5-linux-x64.deb
+sudo apt install ./VideoSaver-1.5.6-linux-x64.deb
 ```
 
 依赖会自动装 `python3-gi` 和 `gir1.2-webkit2-4.0`。装完在应用菜单里搜 VideoSaver。
 其它发行版用 tar.gz：
 
 ```bash
-tar -xzf VideoSaver-1.5.5-linux-x64.tar.gz
+tar -xzf VideoSaver-1.5.6-linux-x64.tar.gz
 ./VideoSaver/VideoSaver
 ```
 
@@ -125,10 +125,10 @@ python app_entry.py              # 或 python launch.py（Windows）
 ```powershell
 cd VideoSaver
 python build_exe.py
-python build_installer.py --version 1.5.5
+python build_installer.py --version 1.5.6
 ```
 
-产物：`installer_out/VideoSaver-Setup-1.5.5.exe`、`dist/VideoSaver-1.5.5.zip`。
+产物：`installer_out/VideoSaver-Setup-1.5.6.exe`、`dist/VideoSaver-1.5.6.zip`。
 
 ### macOS（.app + .dmg）
 
@@ -168,9 +168,10 @@ python build_app.py
 
 ### 抖音解析
 
-抖音分享页有设备指纹，本地算不出签名。需要自建
-[DTK](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)，在设置 → 抖音解析服务里填地址和 API Key。
-没有服务时其它网站不受影响。
+抖音分享页有设备指纹，本地算不出签名，必须接解析服务。原生
+[DTK](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)（`/api/hybrid/video_data`）和网关
+（`/api/v1/parse`）都支持：在设置 → 抖音解析服务里填**根地址**（如 `http://IP:8000`，不要带 `/api/...`）
+和 API Key。没有服务时其它网站不受影响。导入 Cookie 解决不了抖音的 `fresh_cookies`，别在这上面浪费时间。
 
 ### 反馈中继（可选）
 

@@ -74,10 +74,14 @@ except Exception:
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.5"
+APP_VERSION = "1.5.6"
 APP_DATE = "2026-11-13"
 
 CHANGELOG = [
+    {"v": "1.5.6", "date": "2026-11-15",
+     "items": [("新增", "抖音解析同时兼容原生 DTK（/api/hybrid/video_data）和网关（/api/v1/parse），不再只认一种接口。"),
+               ("优化", "「测一下服务通不通」能识别原生 DTK / 网关 / 误填的静态网页；501、404、401 会直接说明原因。"),
+               ("优化", "抖音说明里明确：不要靠导入 Cookie 解决，yt-dlp 本地引擎生成不了签名，必须走解析服务。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
                ("优化", "README 的网页版截图裁掉浏览器标签栏，保存路径打码；补充桌面版与网页版对比说明。"),
@@ -2116,11 +2120,102 @@ def douyin_ready(cfg):
     return bool((dy.get("endpoint") or "").strip() and (dy.get("api_key") or "").strip())
 
 
-def resolve_douyin(url, cfg):
-    """调自建 DTK 拿无水印直链。
+def _dy_post_json(api, body, headers, timeout=45):
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(api, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", DTK_UA)
+    for k, v in (headers or {}).items():
+        req.add_header(k, v)
+    opener = proxy_opener(api, timeout=timeout)
+    with opener.open(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
 
-    抖音页面的设备指纹（UIFID）由浏览器 JS 生成，本地请求伪造不出来，
-    所以这里的活儿交给服务端算签名。返回 (info, "") 或 (None, 原因)。
+
+def _dy_extract_url(obj):
+    """从原生 DTK 的 JSON 里递归找 play_addr/download_addr 的 url_list。"""
+    if isinstance(obj, dict):
+        for k in ("play_addr", "play_addr_h264", "play_addr_265", "download_addr"):
+            v = obj.get(k)
+            if isinstance(v, dict):
+                urls = v.get("url_list") or v.get("urls") or []
+                if urls:
+                    return str(urls[0]), (k == "download_addr")
+        for v in obj.values():
+            u, wm = _dy_extract_url(v)
+            if u:
+                return u, wm
+    elif isinstance(obj, list):
+        for v in obj:
+            u, wm = _dy_extract_url(v)
+            if u:
+                return u, wm
+    return "", False
+
+
+def _dy_parse_gateway(payload):
+    item = payload.get("data") or {}
+    media = (item.get("media") or {}).get("video") or {}
+    direct = media.get("url") or next(iter(media.get("urls") or []), "")
+    if not direct:
+        if (item.get("kind") or "") == "image_album":
+            return None, "这是图文作品，没有单一视频文件"
+        return None, "网关没给出视频直链"
+    return {
+        "url": direct,
+        "title": (item.get("title") or "").strip(),
+        "width": media.get("width"),
+        "height": media.get("height"),
+        "watermark": media.get("watermark"),
+    }, ""
+
+
+def _dy_parse_native(payload):
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return None, "原生 DTK 返回格式不对"
+    for k in ("aweme_detail", "item_struct", "aweme_detail_v2"):
+        if isinstance(data.get(k), dict):
+            data = data[k]
+            break
+    video = data.get("video") or data.get("video_data") or {}
+    direct, wm = _dy_extract_url(video)
+    if not direct:
+        direct, wm = _dy_extract_url(data)
+    if not direct:
+        if data.get("images"):
+            return None, "这是图文作品，没有单一视频文件"
+        return None, "原生 DTK 没给出视频直链"
+    return {
+        "url": direct,
+        "title": (data.get("desc") or data.get("title") or "").strip(),
+        "width": video.get("width"),
+        "height": video.get("height"),
+        "watermark": wm,
+    }, ""
+
+
+def _dy_http_reason(e):
+    body = ""
+    try:
+        body = e.read().decode("utf-8", "replace")[:120].replace("\n", " ").strip()
+    except Exception:
+        pass
+    if e.code == 501:
+        return "地址像静态文件服务器（HTTP 501），不是解析 API；填网关/DTK 的根地址，不要带 /api/..."
+    if e.code in (404, 405):
+        return "接口路径不存在（HTTP %d）；可能填成了网页端口，或这个服务不兼容" % e.code
+    if e.code in (401, 403):
+        return "API Key 不对（HTTP %d）" % e.code
+    return "HTTP %d%s" % (e.code, ("：" + body) if body else "")
+
+
+def resolve_douyin(url, cfg):
+    """调自建解析服务拿无水印直链。
+
+    先试网关契约 POST /api/v1/parse（X-API-Key），
+    再试原生 DTK POST /api/hybrid/video_data（Authorization: Bearer）。
+    抖音的设备指纹由服务端算签名，本地 yt-dlp 一定失败。
     """
     dy = cfg.get("douyin") or {}
     endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
@@ -2132,38 +2227,50 @@ def resolve_douyin(url, cfg):
     if not endpoint.lower().startswith(("http://", "https://")):
         endpoint = "http://" + endpoint
 
-    api = endpoint + "/api/v1/parse?wait=25"
-    body = json.dumps({"url": url}).encode("utf-8")
-    req = urllib.request.Request(api, data=body, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("X-API-Key", key)
+    errors = []
+
+    # 1) 网关契约（video-extract-service）
     try:
-        opener = proxy_opener(api, timeout=45)
-        with opener.open(req, timeout=45) as r:
-            payload = json.loads(r.read().decode("utf-8", "replace"))
+        payload = _dy_post_json(endpoint + "/api/v1/parse?wait=25",
+                                {"url": url}, {"X-API-Key": key}, timeout=45)
+        if payload.get("success"):
+            info, why = _dy_parse_gateway(payload)
+            if info:
+                return info, ""
+            errors.append("网关：" + why)
+        else:
+            err = ((payload.get("error") or {}).get("message")
+                   or (payload.get("error") or {}).get("code") or "未知错误")
+            errors.append("网关：" + str(err)[:100])
+    except urllib.error.HTTPError as e:
+        errors.append("网关：" + _dy_http_reason(e))
     except Exception as e:
-        return None, "连不上解析服务：%s" % str(e)[:160]
+        errors.append("网关连不上：" + str(e)[:90])
 
-    if not payload.get("success"):
-        err = ((payload.get("error") or {}).get("message")
-               or (payload.get("error") or {}).get("code") or "未知错误")
-        return None, "解析服务拒绝了：%s" % str(err)[:160]
+    # 2) 原生 DTK（Evil0ctal/Douyin_TikTok_Download_API）
+    try:
+        api = endpoint + "/api/hybrid/video_data?" + urllib.parse.urlencode(
+            {"url": url, "minimal": "true"})
+        payload = _dy_post_json(api, {}, {"Authorization": "Bearer " + key}, timeout=50)
+        code = payload.get("code")
+        if code in (200, 0) and isinstance(payload.get("data"), dict):
+            info, why = _dy_parse_native(payload)
+            if info:
+                return info, ""
+            errors.append("原生：" + why)
+        else:
+            msg = payload.get("message") or payload.get("msg") or "返回异常"
+            errors.append("原生：" + str(msg)[:100])
+    except urllib.error.HTTPError as e:
+        errors.append("原生：" + _dy_http_reason(e))
+    except Exception as e:
+        errors.append("原生连不上：" + str(e)[:90])
 
-    item = payload.get("data") or {}
-    media = (item.get("media") or {}).get("video") or {}
-    direct = media.get("url") or next(iter(media.get("urls") or []), "")
-    if not direct:
-        kind = item.get("kind") or ""
-        if kind == "image_album":
-            return None, "这是图文作品，没有单一视频文件"
-        return None, "解析服务没给出视频直链"
-    return {
-        "url": direct,
-        "title": (item.get("title") or "").strip(),
-        "width": media.get("width"),
-        "height": media.get("height"),
-        "watermark": media.get("watermark"),
-    }, ""
+    joined = "；".join(errors)
+    if "静态文件服务器" in joined:
+        return None, ("地址像静态文件服务器（HTTP 501），不是解析 API；"
+                      "请填网关/DTK 的根地址（不要带 /api/...），也别填前端网页端口")
+    return None, joined[:260]
 
 
 def host_of(url):
@@ -4909,7 +5016,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                 "dest": dest, "copied": do_copy})
 
     def handle_douyin_test(self):
-        """只测连通性（打 /readyz），不消耗解析配额。"""
+        """检测服务：网关 /readyz、原生 DTK /openapi.json、或误填的静态网页。"""
         cfg = get_config()
         dy = cfg.get("douyin") or {}
         endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
@@ -4917,21 +5024,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_json({"ok": False, "error": "没填服务地址"})
         if not endpoint.lower().startswith(("http://", "https://")):
             endpoint = "http://" + endpoint
-        url = endpoint + "/readyz"
+        has_key = bool((dy.get("api_key") or "").strip())
+        last = ""
         try:
-            opener = proxy_opener(url, timeout=15)
-            with opener.open(url, timeout=15) as r:
-                body = r.read().decode("utf-8", "replace")
-            data = json.loads(body)
+            opener = proxy_opener(endpoint + "/readyz", timeout=12)
+            with opener.open(endpoint + "/readyz", timeout=12) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
             comp = data.get("components") or {}
             bad = [k for k, v in comp.items() if not (v or {}).get("ok")]
             if bad:
-                return self._send_json({"ok": False, "error": "服务在线但组件异常：" + ", ".join(bad)})
-            return self._send_json({"ok": True, "status": data.get("status"),
-                                    "components": list(comp.keys()),
-                                    "has_key": bool((dy.get("api_key") or "").strip())})
+                return self._send_json({"ok": False, "kind": "gateway",
+                                        "error": "服务在线但组件异常：" + ", ".join(bad)})
+            return self._send_json({"ok": True, "kind": "gateway", "status": data.get("status"),
+                                    "components": list(comp.keys()), "has_key": has_key})
         except Exception as e:
-            return self._send_json({"ok": False, "error": str(e)[:160]})
+            last = str(e)[:100]
+
+        # 原生 DTK 一般有 /openapi.json
+        try:
+            opener = proxy_opener(endpoint + "/openapi.json", timeout=10)
+            with opener.open(endpoint + "/openapi.json", timeout=10) as r:
+                spec = json.loads(r.read().decode("utf-8", "replace"))
+            paths = spec.get("paths") or {}
+            if "/api/hybrid/video_data" in paths:
+                return self._send_json({"ok": True, "kind": "native", "has_key": has_key,
+                                        "hint": "原生 DTK 在线，本版本已兼容"})
+            if "/api/v1/parse" in paths:
+                return self._send_json({"ok": True, "kind": "gateway", "has_key": has_key,
+                                        "hint": "网关在线"})
+            return self._send_json({"ok": False,
+                                    "error": "这是 FastAPI，但没有解析接口；确认填的是网关/DTK 根地址"})
+        except Exception as e:
+            last = str(e)[:100]
+
+        # 根路径返回 HTML = 静态网页/前端端口
+        try:
+            opener = proxy_opener(endpoint + "/", timeout=8)
+            with opener.open(endpoint + "/", timeout=8) as r:
+                ctype = (r.headers.get("Content-Type") or "").lower()
+                if "html" in ctype:
+                    return self._send_json({
+                        "ok": False, "kind": "static",
+                        "error": "这个地址返回网页（静态服务器），不是解析 API；请填 API 根地址，不要填前端/网页端口"})
+        except Exception as e:
+            last = str(e)[:100]
+
+        return self._send_json({"ok": False,
+                                "error": "连不上：%s；如果返回 501，说明填的是只支持 GET 的静态服务器" % last})
 
     def handle_ytdlp_status(self):
         target = os.path.join(APP_DIR, "bin", "yt-dlp.exe")

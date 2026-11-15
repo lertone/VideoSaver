@@ -2582,7 +2582,7 @@
         </details>
         <div class="field" style="margin-top:10px">
           <label>服务地址</label>
-          <input type="text" id="dyEndpoint" placeholder="例如 http://127.0.0.1:8000（填你自己的 DTK 服务地址）" />
+          <input type="text" id="dyEndpoint" placeholder="例如 http://127.0.0.1:8000（填根地址，不要带 /api/...）" />
         </div>
         <div class="field">
           <label>API Key</label>
@@ -2592,11 +2592,16 @@
           <button class="iconbtn" id="dyTest">测一下服务通不通</button>
         </div>
         <div class="statusline" id="dyStatus"></div>
+        <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:8px">
+          原生 DTK 和网关都支持：本工具会先试 <code>/api/v1/parse</code>，再试原生
+          <code>/api/hybrid/video_data</code>。地址填根地址（如 <code>http://IP:8000</code>），
+          不要带 <code>/api/...</code>。测服务返回 501 / 网页，说明填成了静态服务器或前端端口。
+        </div>
         <details style="margin-top:10px">
           <summary>怎么部署？三步，命令可直接点一下复制</summary>
           <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:10px">
             需要一台能跑 Docker 的服务器（1 核 2G 起，建议海外或香港）。没有域名也可以，
-            最后用 <code>http://服务器IP:8000</code> 就行。
+            最后用 <code>http://服务器IP:8000</code> 就行（根地址，不要带 <code>/api/...</code>）。
           </div>
           <ol class="steps">
             <li><b>拉代码</b>

@@ -84,6 +84,7 @@ CHANGELOG = [
                ("优化", "「测一下服务通不通」现在会验证 Key 是否有效；删掉的 Key 不会再显示“已填可用”。"),
                ("优化", "解析服务教程改成本机 Docker 优先：不用买服务器，装 Docker 就能跑；服务器只是可选。"),
                ("优化", "导入登录 Cookie 不再强制填 UA，粘上保存就能用。"),
+               ("修复", "赞助二维码之前扫不出来，已换成正确的收款码，扫码即可赞赏。"),
                ("说明", "B站继续用登录 Cookie：1080P 需要登录，4K/HDR 需要大会员。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
@@ -4165,7 +4166,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
     def serve_static(self, name, ctype):
-        """logo / favicon 这类小图直接读文件返回，带一天缓存。"""
+        """logo / favicon 这类小图直接读文件返回；赞赏码不缓存，换图立即生效。"""
         path = asset(name)
         if not os.path.isfile(path):
             return self._send_text("not found", 404)
@@ -4177,7 +4178,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "public, max-age=86400")
+        # 赞赏码可能被随时替换，不能让浏览器缓存一天
+        self.send_header("Cache-Control", "no-store, must-revalidate"
+                         if name.startswith("donate") else "public, max-age=86400")
         self._cors()
         self.end_headers()
         try:

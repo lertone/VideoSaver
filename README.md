@@ -177,8 +177,14 @@ python build_app.py
   App 内「怎么接？两种方案」有完整的 Docker、`.env`、端口、建 Key、测试步骤。
 - 没有服务时其它网站不受影响。导入 Cookie 解决不了抖音的 `fresh_cookies`，别在这上面浪费时间。
 
-B 站 / 小红书目前仍走 yt-dlp + 对应站点的 Cookie：B 站 1080P 要登录、4K/HDR 要大会员；
-小红书无水印/高画质取决于作品本身和登录态，不能保证。抖音解析服务不负责这两个站。
+**B 站**：可选走 DTK（Key 要单独开 B 站权限），解析失败自动回退 yt-dlp + Cookie。
+B 站本身通常不加水印，画质取决于 DTK 的身份池/你的账号；1080P 要登录，4K/HDR 要大会员。
+
+**小红书**：Tikhub 模式走 `app_v2/get_video_note_detail`，直接拿单文件 MP4（实测 1080×1440）。
+DTK 不支持小红书；失败回退 yt-dlp + Cookie。图文笔记没有视频文件。
+
+**Tikhub 的 B 站接口**目前只返回 480P/360P 的 DASH 分轨，本版没接；要 B 站高画质请用 DTK
+（B 站权限 Key）或 yt-dlp + 登录 Cookie。
 
 ### 反馈中继（可选）
 

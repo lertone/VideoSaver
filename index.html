@@ -2571,11 +2571,12 @@
       </div>
 
       <div class="group">
-        <h3>抖音解析服务</h3>
+        <h3>外部解析服务（抖音 / B站 / 小红书）</h3>
         <details>
           <summary>这是什么？点开看说明</summary>
           <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:10px">
-            抖音分享页带设备指纹（UIFID），本地引擎算不出签名，所以需要自建的 DTK 服务
+            抖音分享页带设备指纹（UIFID），本地引擎算不出签名，所以要接外部解析服务。
+          B站 可以走开了 B站权限的 DTK；小红书可以走 Tikhub（app_v2 单文件）。
             （开源项目 Evil0ctal/Douyin_TikTok_Download_API）拿无水印直链。<br>
             <span style="color:var(--muted)">不填也能下别的网站，只是抖音会失败。</span>
           </div>

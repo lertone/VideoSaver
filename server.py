@@ -82,6 +82,7 @@ CHANGELOG = [
      "items": [("新增", "抖音解析同时兼容原生 DTK（/api/hybrid/video_data）、网关（/api/v1/parse），以及 Tikhub 托管（免服务器，按量计费）。"),
                ("修复", "dtk 返回 202 + task_id 时自动轮询 /api/v1/tasks/{id}，并解开 data.data，不再误报「没给出直链」。"),
                ("优化", "「测一下服务通不通」能识别原生 DTK / 网关 / Tikhub / 误填的静态网页；501、403、404、401 会直接说明原因。"),
+               ("新增", "B站 可走 DTK（Key 需开 B站权限），失败自动回退 yt-dlp + Cookie；小红书 可走 Tikhub app_v2，直接拿单文件 MP4。"),
                ("优化", "抖音说明重写：Tikhub、自建 DTK（完整 Docker/端口/建 Key 步骤）、只下 B 站/小红书 三种方案分开讲。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
@@ -1883,6 +1884,17 @@ def is_kuaishou(url):
     return "kuaishou.com" in host or "chenzhongtech.com" in host
 
 
+def is_bilibili(url):
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return "bilibili.com" in host or host == "b23.tv"
+
+
+def is_xiaohongshu(url):
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return ("xiaohongshu.com" in host or "xhslink.com" in host
+            or "xhslink.cn" in host)
+
+
 XHS_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
           "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
           "Mobile/15E148 Safari/604.1")
@@ -2119,7 +2131,11 @@ def resolve_kuaishou(url, proxy=""):
 
 def douyin_ready(cfg):
     dy = cfg.get("douyin") or {}
-    return bool((dy.get("endpoint") or "").strip() and (dy.get("api_key") or "").strip())
+    if not (dy.get("api_key") or "").strip():
+        return False
+    if (dy.get("provider") or "dtk").lower() == "tikhub":
+        return True          # Tikhub 地址可留空，默认 api.tikhub.io
+    return bool((dy.get("endpoint") or "").strip())
 
 
 def _dy_post_json(api, body, headers, timeout=45):
@@ -2303,6 +2319,58 @@ def _tikhub_douyin(url, endpoint, key):
             return info, ""
         errors.append(why)
     return None, "Tikhub 解析失败：" + "；".join(errors)[:180]
+
+
+def _tikhub_xhs(url, endpoint, key):
+    """Tikhub 小红书：app_v2 支持直接吃分享链接，返回单文件 MP4。"""
+    base = (endpoint or "https://api.tikhub.io").rstrip("/")
+    api = base + "/api/v1/xiaohongshu/app_v2/get_video_note_detail?" + \
+          urllib.parse.urlencode({"share_text": url})
+    try:
+        payload = _dy_get_json(api, {"Authorization": "Bearer " + key}, timeout=45)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            return None, "Tikhub token 无效（HTTP 401）"
+        if e.code == 402:
+            return None, "Tikhub 余额不足（HTTP 402）"
+        return None, "Tikhub 小红书失败：" + _dy_http_reason(e)
+    except Exception as e:
+        return None, "Tikhub 小红书连不上：%s" % str(e)[:100]
+    if payload.get("code") not in (200, 0, None):
+        return None, "Tikhub 小红书：" + str(payload.get("message") or payload.get("code"))[:100]
+
+    root = payload.get("data") or {}
+    items = root.get("data") if isinstance(root, dict) else None
+    if not isinstance(items, list) or not items:
+        return None, "小红书返回里没有笔记数据"
+    item = items[0] or {}
+    title = (item.get("title") or item.get("desc") or "").strip()
+    media = ((item.get("video_info_v2") or {}).get("media") or {})
+    streams = media.get("stream") or {}
+    best = None
+    for codec in ("h264", "h265", "h266", "av1"):
+        for st in streams.get(codec) or []:
+            u = st.get("master_url") or next(iter(st.get("backup_urls") or []), "")
+            if not u:
+                continue
+            w = int(st.get("width") or 0)
+            h = int(st.get("height") or 0)
+            br = int(st.get("video_bitrate") or 0)
+            score = (w * h, br, 1 if codec == "h264" else 0)
+            if best is None or score > best[0]:
+                best = (score, u, w, h)
+    if not best:
+        if item.get("type") in ("normal", "image"):
+            return None, "这是图文笔记，没有视频文件"
+        return None, "小红书没找到视频流"
+    _, direct, w, h = best
+    return {
+        "url": direct,
+        "title": title,
+        "width": w or None,
+        "height": h or None,
+        "watermark": False,
+    }, ""
 
 
 def resolve_douyin(url, cfg):
@@ -5422,6 +5490,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             % (attempt, max_attempts, mask_proxy(proxy), cookie_desc, host or "未知"))
                 # 抖音：先换直链（这步要写日志，所以放在 handler 里而不是 build_cmd）
                 dtk, dtk_title, dtk_referer, dtk_ua = None, "", "", ""
+                dy_cfg = cfg.get("douyin") or {}
+                dy_provider = (dy_cfg.get("provider") or "dtk").lower()
                 if is_douyin(origin_url) and douyin_ready(cfg):
                     self._write("[抖音] 正在通过解析服务取直链（最多等 25 秒）…\n")
                     info, why = resolve_douyin(origin_url, cfg)
@@ -5439,6 +5509,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     else:
                         self._write("[抖音] 解析服务没成功：%s\n" % why)
                         self._write("[抖音] 退回本地引擎再试一次（大概率还是失败）…\n")
+                elif is_bilibili(origin_url) and douyin_ready(cfg) and dy_provider == "dtk":
+                    # B 站走 DTK 的 /api/v1/parse；Key 需要单独开 B 站权限
+                    self._write("[B站] 正在通过解析服务取直链…\n")
+                    info, why = resolve_douyin(origin_url, cfg)
+                    if info:
+                        dtk = info
+                        url = info["url"]
+                        dtk_referer = "https://www.bilibili.com/"
+                        dtk_ua = DTK_UA
+                        w, h = info.get("width"), info.get("height")
+                        self._write("[B站] 直链已拿到%s\n"
+                                    % ((" · %sx%s" % (w, h)) if w and h else ""))
+                        dtk_title = safe_filename(info.get("title") or "")
+                        if dtk_title:
+                            self._write("[B站] 标题：%s\n" % dtk_title)
+                    else:
+                        self._write("[B站] 解析服务没成功：%s\n" % why)
+                        self._write("[B站] 回退本地引擎 + Cookie…\n")
+                elif is_bilibili(origin_url) and dy_provider == "tikhub":
+                    self._write("[B站] Tikhub 当前只返回 DASH 分轨（480P/360P），"
+                                "本版不接；走本地引擎 + Cookie。要更高画质请用开了 B站权限的 DTK。\n")
+                elif is_xiaohongshu(origin_url) and dy_provider == "tikhub" and douyin_ready(cfg):
+                    self._write("[小红书] 正在通过 Tikhub 取直链…\n")
+                    info, why = _tikhub_xhs(origin_url,
+                                            (dy_cfg.get("endpoint") or "https://api.tikhub.io"),
+                                            (dy_cfg.get("api_key") or "").strip())
+                    if info:
+                        dtk = info
+                        url = info["url"]
+                        dtk_referer = "https://www.xiaohongshu.com/"
+                        dtk_ua = DTK_UA
+                        w, h = info.get("width"), info.get("height")
+                        self._write("[小红书] 直链已拿到%s\n"
+                                    % ((" · %sx%s" % (w, h)) if w and h else ""))
+                        dtk_title = safe_filename(info.get("title") or "")
+                        if dtk_title:
+                            self._write("[小红书] 标题：%s\n" % dtk_title)
+                    else:
+                        self._write("[小红书] Tikhub 没成功：%s\n" % why)
+                        self._write("[小红书] 回退本地引擎 + Cookie…\n")
+                elif is_xiaohongshu(origin_url) and dy_provider == "dtk":
+                    self._write("[小红书] DTK 不支持小红书；要用 Tikhub 托管，"
+                                "或走本地引擎 + Cookie。\n")
                 elif is_douyin(origin_url):
                     self._write("[提示] 抖音还没配解析服务，本地引擎解不了，"
                                 "去【设置 → 抖音解析服务】填地址和 Key。\n")

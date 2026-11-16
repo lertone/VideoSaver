@@ -286,6 +286,13 @@
   .fbpop textarea:focus { border-color: var(--accent); }
   .fbrow { display: flex; gap: 8px; margin-top: 8px; }
   .fbrow .btn { padding: 9px 14px; font-size: 12.5px; }
+  .fbalt { margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line);
+           display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+           font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .fbalt a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .fbalt a:hover { text-decoration: underline; }
+  .fbalt .iconbtn { padding: 4px 9px; font-size: 11px; }
+  .fbqueue { color: var(--muted); }
   .sniffdrawer { width: min(440px, 94vw); }
   .sniff-top { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
   .sniff-top input {
@@ -2290,14 +2297,18 @@
   </div>
 </div>
 
-<!-- 反馈 / 点赞（顶栏入口） -->
+<!-- 反馈 / 点赞（顶栏入口）：普通用户零配置 -->
 <div class="pop fbpop" id="fbPop" hidden>
   <div class="fbhead">反馈 / 点赞</div>
-  <div class="fbnote" id="fbPopNote">写几句话，或点个赞，会直接发给作者。</div>
+  <div class="fbnote" id="fbPopNote">写几句话，或点个赞，会直接发给作者，不用配置任何东西。</div>
   <textarea id="fbPopText" rows="3" placeholder="哪里不好用、想要什么功能…"></textarea>
   <div class="fbrow">
     <button class="btn primary" id="fbPopSend" style="flex:1">发送</button>
     <button class="btn ghost" id="fbPopLike" style="flex:none">👍 点赞</button>
+  </div>
+  <div class="fbalt">
+    <span class="fbqueue" id="fbPopQueue" hidden></span>
+    <a id="fbPopIssue" href="https://github.com/lertone/VideoSaver/issues/new" target="_blank" rel="noopener">去 GitHub 提 Issue</a>
   </div>
 </div>
 
@@ -2461,7 +2472,7 @@
       <div class="group">
         <h3>反馈 / 点赞</h3>
         <div class="note" id="fbNote" style="color:var(--muted);font-size:11.5px;line-height:1.8;margin-bottom:10px">
-          点「点赞」或写几句话，会直接发到作者邮箱，<b>不需要你配置任何东西</b>。只发送你写的内容、软件版本和系统类型。
+          点「点赞」或写几句话，会直接发给作者，<b>不需要你配置邮箱或任何账号</b>。只发送你写的内容、软件版本和系统类型。
         </div>
         <div class="field"><label>想说的话（点赞可不填）</label>
           <textarea id="fbText" rows="3" placeholder="哪里不好用、想要什么功能…"></textarea>
@@ -2470,28 +2481,11 @@
           <button class="btn primary" id="fbSend" style="flex:1">发送反馈</button>
           <button class="btn ghost" id="fbLike" style="flex:none">👍 点赞</button>
         </div>
-        <details style="margin-top:12px">
-          <summary>高级：本机 SMTP（作者自用 / 离线备用）</summary>
-          <div style="padding-top:10px">
-            <div class="note" style="color:var(--muted);font-size:11px;line-height:1.7;margin-bottom:10px">
-              普通用户不用管这里。只有没连接作者反馈服务时，才需要自己填 SMTP 才能发信。
-            </div>
-            <div class="field"><label>SMTP 服务器</label><input type="text" id="smtpHost" placeholder="smtp.qq.com" /></div>
-            <div class="row2">
-              <div class="field"><label>端口</label><input type="text" id="smtpPort" placeholder="465" /></div>
-              <div class="field"><label>加密方式</label>
-                <select id="smtpSsl"><option value="1">SSL（465）</option><option value="0">STARTTLS（587）</option></select>
-              </div>
-            </div>
-            <div class="field"><label>账号</label><input type="text" id="smtpUser" placeholder="you@qq.com" /></div>
-            <div class="field"><label>授权码 / 密码</label><input type="password" id="smtpPass" placeholder="留空 = 不修改" /></div>
-            <div class="field"><label>收件邮箱</label><input type="text" id="smtpTo" placeholder="留空 = 发给账号自己" /></div>
-            <div style="display:flex;gap:8px">
-              <button class="iconbtn" id="smtpSave" style="flex:1">保存配置</button>
-              <button class="iconbtn" id="smtpTest" style="flex:1">发测试邮件</button>
-            </div>
-          </div>
-        </details>
+        <div class="fbalt">
+          <span class="fbqueue" id="fbQueueText">暂时没送出去的反馈会自动排队重发，不用你做任何设置。</span>
+          <button class="iconbtn" id="fbRetry" hidden>立即重试</button>
+          <a id="fbIssue" href="https://github.com/lertone/VideoSaver/issues/new" target="_blank" rel="noopener">去 GitHub 提 Issue</a>
+        </div>
       </div>
 
       <div class="group">
@@ -6968,104 +6962,157 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     });
   })();
 
-  /* ---------- 顶栏「反馈」：一键发，不跳设置 ---------- */
+  /* ---------- 反馈：用户零配置；发不出去自动排队，另有 GitHub 兜底 ----------
+     旧版会在中继没配好时提示用户「去设置里配 SMTP」，那是把作者的工作
+     甩给普通用户。现在无论成功、排队还是断网，都不出现「配置」二字。 */
+  let _fbStatus = { relay: false, queued: 0, version: "", last_error: "" };
+
+  async function fbRefreshStatus() {
+    try {
+      const j = await api("/api/feedback/status");
+      if (j && j.ok) _fbStatus = j;
+    } catch (e) {}
+    fbPaintStatus();
+    return _fbStatus;
+  }
+
+  function fbPaintStatus() {
+    const n = _fbStatus.queued || 0, relay = !!_fbStatus.relay;
+    const q = $("fbPopQueue");
+    if (q) {
+      q.hidden = !n;
+      q.textContent = n
+        ? (relay ? "有 " + n + " 条待发送，联网后会自动重发"
+                 : "有 " + n + " 条存在本机，点「提 Issue」也能发给作者")
+        : "";
+    }
+    const qs = $("fbQueueText");
+    if (qs) qs.textContent = n
+      ? (relay ? "有 " + n + " 条还没送到，联网后会自动重发，不用你做任何设置。"
+               : "有 " + n + " 条存在本机，点「去 GitHub 提 Issue」也能直接发给作者。")
+      : "暂时没送出去的反馈会先存到本机，不用你做任何设置。";
+    const rb = $("fbRetry");
+    if (rb) rb.hidden = !n || !relay;
+  }
+
+  function fbIssueUrl(text) {
+    const base = _fbStatus.issues_url || "https://github.com/lertone/VideoSaver/issues/new";
+    const body = [
+      text || "（在这里补充你遇到的问题、复现步骤或建议）", "", "---",
+      "由 VideoSaver 应用内「反馈 / 点赞」生成" + (_fbStatus.version ? " · v" + _fbStatus.version : "")
+    ].join("\n");
+    return base + "?title=" + encodeURIComponent(text ? "反馈：" + text.slice(0, 40) : "使用反馈")
+      + "&body=" + encodeURIComponent(body);
+  }
+
+  function fbUpdateIssueLinks(text) {
+    const u = fbIssueUrl(text || "");
+    ["fbPopIssue", "fbIssue"].forEach(id => { const a = $(id); if (a) a.href = u; });
+  }
+
+  async function fbOpenIssue(url) {
+    try {
+      const j = await api("/api/open-url", { url: url });
+      if (j && j.ok) return;
+    } catch (e) {}
+    try { window.open(url, "_blank", "noopener"); } catch (e) { location.href = url; }
+  }
+
+  async function fbSend(kind, text) {
+    const j = await api("/api/feedback", { kind: kind, text: text });
+    if (!j || !j.ok) throw new Error((j && j.error) || "没发出去");
+    await fbRefreshStatus();
+    return j;
+  }
+
+  function fbToastResult(j, kind, text) {
+    if (j.via === "queued") {
+      toast(j.relay ? "暂时没连上，已存到本机，联网后会自动重发"
+                    : "已存到本机；也可以点「提 Issue」直接发给作者", "bad", {
+        label: "提 Issue", fn: () => fbOpenIssue(fbIssueUrl(text))
+      });
+    } else {
+      toast(kind === "like" ? "收到你的赞了" : "反馈已发送，谢谢", "ok");
+    }
+  }
+
+  ["fbPopIssue", "fbIssue"].forEach(id => {
+    const a = $(id);
+    if (a) a.onclick = e => { e.preventDefault(); fbOpenIssue(a.href); };
+  });
+  fbRefreshStatus();
+  fbUpdateIssueLinks("");
+
   (function quickFeedback() {
     const btn = $("fbBtn"), pop = $("fbPop");
     if (!btn || !pop) return;
-    let relay = false;
-    fetch("/api/smtp").then(r => r.json()).then(j => {
-      relay = !!j.relay;
-      const n = $("fbPopNote");
-      if (n) n.textContent = relay
-        ? "写几句话，或点个赞，会直接发给作者，不需要配置任何东西。"
-        : "当前未连接作者反馈服务；点发送会提示你到设置里配置。";
-    }).catch(() => {});
     btn.onclick = e => {
       e.stopPropagation();
-      if (pop.hidden) { showPop(pop, btn, 400); pop.style.width = "330px"; }
+      if (pop.hidden) { showPop(pop, btn, 400); pop.style.width = "330px"; fbRefreshStatus(); }
       else hidePop(pop, btn);
     };
     document.addEventListener("click", e => {
       if (!e.target.closest || !e.target.closest("#fbPop, #fbBtn"))
         hidePop(pop, btn);
     });
+    $("fbPopText").oninput = e => fbUpdateIssueLinks(e.target.value.trim());
     $("fbPopSend").onclick = async () => {
       const text = $("fbPopText").value.trim();
       if (!text) { toast("先写点什么再发", "bad"); return; }
-      const j = await api("/api/feedback", { kind: "text", text });
-      if (j.ok) { $("fbPopText").value = ""; hidePop(pop, btn); toast("反馈已发送，谢谢", "ok"); }
-      else toast("没发出去：" + (j.error || "未知"), "bad");
+      try {
+        const j = await fbSend("text", text);
+        $("fbPopText").value = "";
+        fbToastResult(j, "text", text);
+        if (j.via !== "queued") hidePop(pop, btn);
+      } catch (e) { toast("没发出去：" + (e.message || "未知"), "bad"); }
     };
     $("fbPopLike").onclick = async () => {
-      const j = await api("/api/feedback", { kind: "like", text: "" });
-      if (j.ok) { hidePop(pop, btn); toast("收到你的赞了", "ok"); }
-      else toast("没发出去：" + (j.error || "未知"), "bad");
+      try {
+        const j = await fbSend("like", "");
+        fbToastResult(j, "like", "");
+        if (j.via !== "queued") hidePop(pop, btn);
+      } catch (e) { toast("没发出去：" + (e.message || "未知"), "bad"); }
     };
   })();
 
-  /* ---------- SMTP 配置 + 反馈/点赞 ---------- */
+  /* ---------- 设置页「反馈 / 点赞」：只有发送与补发，没有 SMTP 表单 ---------- */
   (function feedback() {
-    const ids = ["smtpHost", "smtpPort", "smtpUser", "smtpPass", "smtpTo", "smtpSsl", "fbText"];
-    const el = {};
-    ids.forEach(k => el[k] = $(k));
-    if (!el.smtpHost) return;
-    let passwordSet = false;
-
-    async function load() {
-      try {
-        const j = await api("/api/smtp");
-        el.smtpHost.value = j.host || "";
-        el.smtpPort.value = j.port || 465;
-        el.smtpUser.value = j.user || "";
-        el.smtpTo.value = j.to || "";
-        el.smtpSsl.value = j.ssl === false ? "0" : "1";
-        passwordSet = !!j.password_set;
-        el.smtpPass.placeholder = passwordSet ? "已保存（留空不改）" : "邮箱授权码";
-        const note = $("fbNote");
-        if (note) note.innerHTML = j.relay
-          ? '点「点赞」或写几句话，会直接发到作者邮箱，<b>不需要你配置任何东西</b>。只发送你写的内容、软件版本和系统类型。'
-          : '当前没有连接作者的反馈服务，普通用户暂时发不出去；作者可在下方「高级」里配本机 SMTP 自用。';
-      } catch (e) {}
-    }
-    load();
-
-    async function save() {
-      const body = {
-        host: el.smtpHost.value.trim(), port: parseInt(el.smtpPort.value, 10) || 465,
-        user: el.smtpUser.value.trim(), to: el.smtpTo.value.trim(),
-        ssl: el.smtpSsl.value !== "0", password: el.smtpPass.value
-      };
-      if (!body.host || !body.user) { say("先填 SMTP 服务器和账号", "bad"); return false; }
-      if (!body.password && !passwordSet) { say("还要填授权码", "bad"); return false; }
-      const j = await api("/api/smtp", body);
-      if (j.ok) {
-        passwordSet = passwordSet || !!body.password;
-        el.smtpPass.value = "";
-        el.smtpPass.placeholder = "已保存（留空不改）";
-        say("SMTP 配置已保存", "ok");
-      } else say("保存失败：" + (j.error || "未知"), "bad");
-      return !!j.ok;
-    }
-    $("smtpSave").onclick = save;
-    $("smtpTest").onclick = async () => {
-      if (!(await save())) return;
-      say("正在发测试邮件…", "busy");
-      const j = await api("/api/smtp/test", {});
-      if (j.ok) say("测试邮件已发出，去收件箱看看", "ok");
-      else say("发信失败：" + (j.error || "未知"), "bad");
-    };
-    $("fbSend").onclick = async () => {
+    const el = { fbText: $("fbText"), fbSend: $("fbSend"),
+                 fbLike: $("fbLike"), fbRetry: $("fbRetry") };
+    if (!el.fbText) return;
+    el.fbText.oninput = e => fbUpdateIssueLinks(e.target.value.trim());
+    el.fbSend.onclick = async () => {
       const text = el.fbText.value.trim();
       if (!text) { say("先写点什么再发", "bad"); return; }
       say("正在发送反馈…", "busy");
-      const j = await api("/api/feedback", { kind: "text", text });
-      if (j.ok) { el.fbText.value = ""; say("反馈已发送，谢谢", "ok"); }
-      else say("没发出去：" + (j.error || "未知"), "bad");
+      try {
+        const j = await fbSend("text", text);
+        el.fbText.value = "";
+        if (j.via === "queued") {
+          say(j.relay ? "暂时没连上，已存到本机，联网后会自动重发"
+                      : "已存到本机；也可以点「去 GitHub 提 Issue」直接发给作者", "busy");
+          toast(j.relay ? "已存到本机，联网后自动重发" : "已存到本机；也可以提 Issue", "bad", {
+            label: "提 Issue", fn: () => fbOpenIssue(fbIssueUrl(text))
+          });
+        } else say("反馈已发送，谢谢", "ok");
+      } catch (e) { say("没发出去：" + (e.message || "未知"), "bad"); }
     };
-    $("fbLike").onclick = async () => {
-      const j = await api("/api/feedback", { kind: "like", text: "" });
-      if (j.ok) say("收到你的赞了", "ok");
-      else say("没发出去：" + (j.error || "未知"), "bad");
+    el.fbLike.onclick = async () => {
+      try {
+        const j = await fbSend("like", "");
+        if (j.via === "queued") say(j.relay ? "暂时没连上，赞已存到本机，联网后自动重发"
+                                            : "赞已存到本机；也可以点「去 GitHub 提 Issue」", "busy");
+        else say("收到你的赞了", "ok");
+      } catch (e) { say("没发出去：" + (e.message || "未知"), "bad"); }
+    };
+    if (el.fbRetry) el.fbRetry.onclick = async () => {
+      say("正在补发…", "busy");
+      try {
+        const j = await api("/api/feedback/retry", {});
+        await fbRefreshStatus();
+        if (j.queued) say("还有 " + j.queued + " 条没发出去，稍后会自动再试", "busy");
+        else say("补发完成，谢谢", "ok");
+      } catch (e) { say("补发失败：" + (e.message || "未知"), "bad"); }
     };
   })();
 

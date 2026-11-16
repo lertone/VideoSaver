@@ -87,7 +87,7 @@ def pyi_args(version: str) -> list[str]:
                  "--collect-submodules", "clr",
                  "--hidden-import", "clr",
                  "--icon", os.path.join(ROOT, "app.ico")]
-    for item in ("index.html", "app.ico", "favicon.png", "logo.png", "donate.png", "donate-alipay.png", "donate-wechat.png", "bin"):
+    for item in ("index.html", "app.ico", "favicon.png", "logo.png", "donate.png", "donate-alipay.png", "donate-wechat.png", "feedback_config.json", "bin"):
         src = os.path.join(ROOT, item)
         if os.path.exists(src):
             args += ["--add-data", src + sep + item]
@@ -127,7 +127,7 @@ def stage_binaries() -> None:
                 except OSError:
                     pass
         # 静态资源也放一份到 exe 同目录：不依赖 _MEIPASS，用户还能直接改界面
-        for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png", "donate-alipay.png", "donate-wechat.png"):
+        for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png", "donate-alipay.png", "donate-wechat.png", "feedback_config.json"):
             src = os.path.join(ROOT, name)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(root, name))
@@ -229,6 +229,13 @@ def main() -> None:
         tag = "linux-" + ("arm64" if platform.machine() in ("aarch64", "arm64") else "x64")
     print("构建 VideoSaver %s (%s)" % (version, tag))
     ensure_bin()
+    # 没有注入密钥时补一个空配置，保证 --add-data 一定有文件可打包
+    cfg = os.path.join(ROOT, "feedback_config.json")
+    if not os.path.isfile(cfg):
+        import json
+        with open(cfg, "w", encoding="utf-8") as f:
+            json.dump({"relay": "", "token": ""}, f, ensure_ascii=False, indent=2)
+        print("feedback_config.json 不存在，已写入空配置")
     os.makedirs(RELEASE, exist_ok=True)
     subprocess.check_call(pyi_args(version), cwd=ROOT)
     stage_binaries()

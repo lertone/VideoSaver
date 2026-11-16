@@ -184,6 +184,18 @@ python build_app.py
 **小红书**：Tikhub 模式走 `app_v2/get_video_note_detail`，直接拿单文件 MP4（实测 1080×1440）。
 图文笔记没有视频文件；失败回退 yt-dlp + Cookie。
 
+### 反馈 / 点赞
+
+点顶栏「反馈」，写几句话或点个赞就行，**普通用户不需要配置邮箱、SMTP 或任何账号**。
+本机后端只提交你写的内容、软件版本和系统类型，由作者的中继发信；中继暂时连不上时
+内容会先存到本机、联网后自动补发，不会白写。弹窗里也常备
+「[去 GitHub 提 Issue](https://github.com/lertone/VideoSaver/issues/new)」，任何情况下都能联系到作者。
+
+维护者注意：中继地址和令牌**不写进公开仓库**。发版时由构建环境注入 `feedback_config.json`
+（仓库 Secrets：`VIDEOSAVER_FEEDBACK_RELAY` / `VIDEOSAVER_FEEDBACK_TOKEN`），
+本地调试可用同名环境变量或 `private_config.py` 覆盖。没有注入时构建照常通过，
+反馈自动走「本机待发队列 + GitHub Issue」，用户侧没有任何额外操作。
+
 ## Cookie 过期了怎么办
 
 ### 本机 B 站 / 小红书 Cookie
@@ -209,7 +221,9 @@ B 站不接 DTK，不需要在 DTK 里配 B 站 Cookie。
 
 - 下载文件、配置、Cookie 都只在本机。
 - 没有账号、没有统计上报。
-- 反馈是用户主动点击才发送；内容只有反馈文字、版本和系统类型。
+- 反馈是用户主动点击才发送；内容只有反馈文字、版本和系统类型，不含账号、路径或 Cookie。
+- 断网时的待发内容只存在本机 `feedback_outbox.json`，联网后自动补发，可随时删除。
+- 反馈中继地址与令牌由构建期注入，仓库源码里只有空占位；中继侧按 IP 限流。
 - 仓库不包含任何人的 SMTP 授权码、管理员 token、Cookie、日志或下载记录。
 
 ## 已知限制

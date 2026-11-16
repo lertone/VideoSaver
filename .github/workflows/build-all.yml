@@ -59,6 +59,13 @@ jobs:
             pip install PyGObject || true
           fi
 
+      - name: Inject feedback relay config
+        shell: bash
+        env:
+          VIDEOSAVER_FEEDBACK_RELAY: ${{ secrets.VIDEOSAVER_FEEDBACK_RELAY }}
+          VIDEOSAVER_FEEDBACK_TOKEN: ${{ secrets.VIDEOSAVER_FEEDBACK_TOKEN }}
+        run: python tools/write_feedback_config.py
+
       - name: Fetch binaries
         run: python tools/fetch_bin.py
 

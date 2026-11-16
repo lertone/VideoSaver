@@ -55,21 +55,25 @@ import wm_detect
 #       └─ 安装版：默认 %LOCALAPPDATA%\VideoSaver（Program Files 不可写）
 
 # ---------------------------------------------------------------------------
-# 反馈中继：把这里填成你自己的服务地址。
-# 有域名：https://api.example.com/v1/feedback（推荐，走 HTTPS）
-# 没域名也能用：http://1.2.3.4:8080/v1/feedback（明文，内容只有反馈文字）
-# 填了之后，用户点「点赞 / 发送反馈」由本机后端直接 POST 给中继，
-# 中继用它自己配好的 SMTP 发到作者邮箱 —— 用户不需要填任何东西。
-# 留空则自动退回「本机 SMTP」模式（作者自用 / 离线备用），行为与 1.4.6 一致。
-# 也可用环境变量 VIDEOSAVER_FEEDBACK_RELAY / VIDEOSAVER_FEEDBACK_TOKEN 覆盖，方便调试。
-# 反馈中继属于私人部署，不写进开源仓库。
-# 本地构建时把值放进 private_config.py（已在 .gitignore），
-# 没有这个文件就自动退回「本机 SMTP / 未配置」。
+# 反馈 / 点赞：普通用户永远零配置。
+#
+# 1) 首选：本机后端直接 POST 到作者的反馈中继，中继用它自己配好的邮箱发信。
+#    地址和令牌由构建期写进 feedback_config.json（CI 从 Secrets 注入），
+#    公开仓库里不出现任何密钥；环境变量 / config.json 可覆盖，方便调试。
+# 2) 次选：中继没配或暂时连不上，内容先存进本机待发队列，联网后自动重发。
+#    用户不用填邮箱、不用配 SMTP，也不会因为断网丢掉刚写的话。
+# 3) 兜底：界面上始终给一个 GitHub Issue 预填链接，任何情况下都能联系作者。
+# 本机 SMTP 只作为作者自用的离线备用，绝不出现在普通用户看到的提示里。
+# ---------------------------------------------------------------------------
 try:
     from private_config import FEEDBACK_RELAY_URL, FEEDBACK_APP_TOKEN
 except Exception:
     FEEDBACK_RELAY_URL = ""
     FEEDBACK_APP_TOKEN = ""
+
+FEEDBACK_ISSUES_URL = "https://github.com/lertone/VideoSaver/issues/new"
+FEEDBACK_OUTBOX_MAX = 50
+FEEDBACK_RETRY_SECONDS = 120
 
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
@@ -85,6 +89,8 @@ CHANGELOG = [
                ("优化", "解析服务教程改成本机 Docker 优先：不用买服务器，装 Docker 就能跑；服务器只是可选。"),
                ("优化", "导入登录 Cookie 不再强制填 UA，粘上保存就能用。"),
                ("修复", "赞助二维码之前扫不出来，已换成正确的收款码，扫码即可赞赏。"),
+               ("修复", "反馈 / 点赞真的不用配置了：设置里不再出现邮箱和 SMTP，普通用户点一下就发。"),
+               ("新增", "网络不好或反馈服务维护时，写的内容会先存到本机，联网后自动补发，不会白写；也可以直接去 GitHub 提 Issue。"),
                ("说明", "B站继续用登录 Cookie：1080P 需要登录，4K/HDR 需要大会员。")]},
     {"v": "1.5.5", "date": "2026-11-15",
      "items": [("新增", "应用内「赞助」内置支付宝 / 微信赞赏码，可切换；二维码已去掉海报上的姓名与头像。"),
@@ -394,14 +400,119 @@ RUNTIME_FILE = os.path.join(DATA_DIR, "runtime.json")
 os.makedirs(COOKIE_DIR, exist_ok=True)
 
 
+FEEDBACK_OUTBOX_FILE = os.path.join(DATA_DIR, "feedback_outbox.json")
+_fb_lock = threading.Lock()
+_fb_state = {"last_error": "", "last_sent": 0.0}
+
+
+def bundled_feedback_config():
+    """读构建期注入的反馈配置；文件不存在或没注入时返回空字典。"""
+    try:
+        with open(asset("feedback_config.json"), "r", encoding="utf-8") as f:
+            j = json.load(f)
+        return j if isinstance(j, dict) else {}
+    except Exception:
+        return {}
+
+
 def feedback_relay():
-    """返回 (url, token)。常量优先，允许 config.json / 环境变量覆盖便于调试。"""
+    """返回 (url, token)：环境变量 > config.json > 构建注入 > 本地私有配置。"""
     cfg = get_config().get("feedback") or {}
+    bundled = bundled_feedback_config()
     url = (os.environ.get("VIDEOSAVER_FEEDBACK_RELAY")
-           or cfg.get("relay") or FEEDBACK_RELAY_URL or "").strip()
+           or cfg.get("relay") or bundled.get("relay")
+           or FEEDBACK_RELAY_URL or "").strip()
     token = (os.environ.get("VIDEOSAVER_FEEDBACK_TOKEN")
-             or cfg.get("token") or FEEDBACK_APP_TOKEN or "").strip()
+             or cfg.get("token") or bundled.get("token")
+             or FEEDBACK_APP_TOKEN or "").strip()
     return url, token
+
+
+def _fb_read():
+    try:
+        with open(FEEDBACK_OUTBOX_FILE, "r", encoding="utf-8") as f:
+            j = json.load(f)
+        return j if isinstance(j, list) else []
+    except Exception:
+        return []
+
+
+def _fb_write(items):
+    """原子写，避免退出时把待发内容写坏。"""
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = FEEDBACK_OUTBOX_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(items[-FEEDBACK_OUTBOX_MAX:], f, ensure_ascii=False, indent=1)
+        os.replace(tmp, FEEDBACK_OUTBOX_FILE)
+    except Exception:
+        pass
+
+
+def queue_feedback(kind, text):
+    """中继暂时不通就先存本机；返回当前待发条数。绝不提示用户去配 SMTP。"""
+    item = {
+        "id": "%d-%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6]),
+        "kind": kind, "text": text,
+        "version": APP_VERSION, "platform": platform.platform(),
+        "ts": time.strftime("%Y-%m-%d %H:%M:%S"), "tries": 0,
+    }
+    with _fb_lock:
+        items = _fb_read()
+        items.append(item)
+        _fb_write(items)
+        return len(items)
+
+
+def flush_feedback_outbox():
+    """后台重发待发队列；网络请求不占文件锁，返回 (已发数, 剩余数, 错误)。"""
+    with _fb_lock:
+        items = _fb_read()
+    if not items:
+        return 0, 0, ""
+    url, token = feedback_relay()
+    if not url:
+        return 0, len(items), "未连接反馈服务"
+
+    batch, done, err = items[:5], [], ""
+    for it in batch:
+        ok, e = post_feedback_relay(url, token, {
+            "kind": it.get("kind", "text"), "text": it.get("text", ""),
+            "version": it.get("version", APP_VERSION),
+            "platform": it.get("platform", ""),
+        })
+        if ok:
+            done.append(it.get("id"))
+        else:
+            err = e
+    tried = {x.get("id") for x in batch}
+    with _fb_lock:
+        cur = _fb_read()
+        left = []
+        for x in cur:
+            if x.get("id") in done:
+                continue
+            if x.get("id") in tried:
+                x["tries"] = int(x.get("tries") or 0) + 1
+            left.append(x)
+        _fb_write(left)
+    if done:
+        _fb_state["last_error"] = ""
+        _fb_state["last_sent"] = time.time()
+    elif err:
+        _fb_state["last_error"] = err[:160]
+    return len(done), len(left), err
+
+
+def feedback_retry_loop():
+    """启动后稍等再补发，之后每两分钟试一次；全程静默，不打扰用户。"""
+    time.sleep(8)
+    while True:
+        try:
+            flush_feedback_outbox()
+        except Exception:
+            pass
+        time.sleep(FEEDBACK_RETRY_SECONDS)
 
 
 def post_feedback_relay(url, token, payload):
@@ -3864,6 +3975,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.handle_ai_profiles()
                 if self.path == "/api/smtp":
                     return self.handle_smtp()
+                if self.path == "/api/feedback/status":
+                    return self.handle_feedback_status()
                 if self.path == "/api/ai/memory":
                     return self.handle_ai_memory()
                 if self.path == "/api/ping":
@@ -3921,6 +4034,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.handle_smtp_test()
                 if self.path == "/api/feedback":
                     return self.handle_feedback()
+                if self.path == "/api/feedback/retry":
+                    return self.handle_feedback_retry()
                 if self.path == "/api/ai/memory":
                     return self.handle_ai_memory()
                 if self.path == "/api/ai/config":
@@ -4395,11 +4510,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         allow = ("https://www.docker.com/", "https://docs.docker.com/",
                  "https://docs.searxng.org/", "https://github.com/searxng/",
                  "https://bochaai.com/", "https://www.tavily.com/",
-                 "https://serper.dev/")
+                 "https://serper.dev/",
+                 # 反馈兜底：允许打开本项目的 Issue 预填页（带 query 参数）
+                 "https://github.com/lertone/VideoSaver/")
         if not url.startswith(allow):
             return self._send_json({"ok": False, "error": "不在允许打开的列表里"}, 400)
         try:
-            os.startfile(url)
+            # os.startfile 只有 Windows 有；mac/Linux 用 webbrowser兜底
+            if hasattr(os, "startfile"):
+                os.startfile(url)
+            else:
+                webbrowser.open(url)
         except Exception as e:
             return self._send_json({"ok": False, "error": str(e)}, 500)
         return self._send_json({"ok": True})
@@ -4840,7 +4961,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self._send_json({"ok": ok, "error": err})
 
     def handle_feedback(self):
-        """用户零配置：优先走作者的中继；中继没配/挂了再退回本机 SMTP。"""
+        """用户零配置：中继直发 → 本机排队自动重发 → GitHub Issue 兜底。
+
+        刻意不再用本机 config.json 里的 SMTP：旧版本用户可能存过自己的邮箱授权码，
+        继续沿用等于让用户在不知情的情况下用自己的邮箱发信，这是要修掉的坏体验。
+        """
         data = self._read_json()
         kind = "like" if str(data.get("kind") or "text") == "like" else "text"
         text = str(data.get("text") or "").strip()[:4000]
@@ -4855,26 +4980,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "version": APP_VERSION, "platform": platform.platform(),
             })
             if ok:
+                # 顺手把之前排队的内容一起补发，用户无感
+                threading.Thread(target=flush_feedback_outbox, daemon=True).start()
                 return self._send_json({"ok": True, "via": "relay"})
             relay_err = err
 
-        # 离线备用：作者自己配的 SMTP（普通用户不会走到这里）
-        cfg = get_config().get("smtp") or {}
-        if cfg.get("host") and cfg.get("user") and cfg.get("password"):
-            subject = ("[VideoSaver] 点赞" if kind == "like"
-                       else "[VideoSaver] 用户反馈")
-            body = ("类型：%s\n时间：%s\n版本：%s\n平台：%s\n\n%s" % (
-                "点赞" if kind == "like" else "文字反馈",
-                time.strftime("%Y-%m-%d %H:%M:%S"), APP_VERSION,
-                platform.platform(), text or "（没有填写内容）"))
-            ok, err = send_mail(cfg, subject, body)
-            return self._send_json({"ok": ok, "error": err, "via": "smtp"})
+        # 断网 / 中继维护 / 令牌换了：先收下；只有确实配了中继才承诺自动重发
+        n = queue_feedback(kind, text)
+        _fb_state["last_error"] = relay_err[:160]
+        configured = bool(relay_url)
+        if configured:
+            threading.Thread(target=flush_feedback_outbox, daemon=True).start()
+        return self._send_json({
+            "ok": True, "via": "queued", "queued": n, "relay": configured,
+            "issues_url": FEEDBACK_ISSUES_URL,
+            "note": ("暂时没送到作者，已存到本机，联网后会自动重发" if configured
+                     else "反馈已存到本机；点「去 GitHub 提 Issue」也能直接发给作者"),
+        })
 
-        if relay_err:
-            return self._send_json(
-                {"ok": False, "error": "反馈服务暂时不可用：" + relay_err[:160]}, 502)
-        return self._send_json(
-            {"ok": False, "error": "还没连接反馈服务（作者可在设置 → 高级里配本机 SMTP）"}, 400)
+    def handle_feedback_status(self):
+        with _fb_lock:
+            queued = len(_fb_read())
+        relay_url, _token = feedback_relay()
+        return self._send_json({
+            "ok": True, "relay": bool(relay_url), "queued": queued,
+            "version": APP_VERSION, "issues_url": FEEDBACK_ISSUES_URL,
+            "last_error": _fb_state.get("last_error", ""),
+        })
+
+    def handle_feedback_retry(self):
+        sent, left, err = flush_feedback_outbox()
+        return self._send_json({"ok": True, "sent": sent, "queued": left,
+                                "error": err, "issues_url": FEEDBACK_ISSUES_URL})
 
     def handle_notify_setting(self):
         """只改通知开关，不动其它配置。"""
@@ -6021,7 +6158,7 @@ AI_SYSTEM_PROMPT = """你是 VideoSaver 的专属智能助手（VS-Agent），�
 - 需要看画面：用 look_at_video 抽帧。只有用户开启「模型支持看图」时你才真的能看到；没开就老实说看不到。
 - 不要自己拼 ffmpeg / yt-dlp 参数，也不要执行任意命令，只用上面这些工具。
 - 用户要「抓某个网页的视频」：先 open_sniffer(url)，让他播放，再 list_sniffed 挑地址下载。
-- 用户要反馈/点赞：用 send_feedback，不要让他自己找邮箱。
+- 用户要反馈/点赞：用 send_feedback，不要让他自己找邮箱，更不要让他配置 SMTP 或授权码。
 - 用户嫌占空间：scan_residue 报数量，得到确认后 clean_residue(confirm=true)。
 
 【知识库】
@@ -7341,15 +7478,18 @@ watch 链接 / UP 主主页 / 合集 / 收藏夹链接，再 check_url 验证后
 站内搜索 API 需要匿名 buvid3 cookie，否则返回 HTTP 412。
 
 ## 反馈与点赞
-普通用户不需要配置：点「点赞」或写反馈会由本机后端 POST 到作者的反馈中继
-（FEEDBACK_RELAY_URL，服务端一次性配好 SMTP），只提交 内容/版本/系统类型，不含任何个人信息。
-中继不可用时自动退回本机 SMTP。设置里「高级：本机 SMTP」只给作者自用 / 离线备用。
-设置 → 反馈 / 点赞里填自己的 SMTP：服务器、端口（465 用 SSL，587 用 STARTTLS）、账号、
-授权码/密码、收件邮箱（留空就发给账号自己）。点「发测试邮件」验证；之后点「点赞」或写文字反馈，
-邮件直接从用户自己的邮箱发到收件邮箱，不经过任何第三方服务器。授权码只存在本机 config.json，
-/api/settings 只返回 password_set，不回传明文。没配 SMTP 时点反馈会提示先去设置。
-常见失败：535 认证失败（用了登录密码而不是授权码）、Connection refused / timed out（端口或防火墙）、
-证书错误（465 必须用 SSL、587 必须用 STARTTLS）。
+普通用户永远不需要配置邮箱或 SMTP，也不要建议用户去设置里填 SMTP。
+点「点赞」或写反馈，由本机后端 POST 到作者的反馈中继，只提交 内容/版本/系统类型，
+不含账号、路径、Cookie 等个人信息；邮件账号只在服务器端配一次。
+中继地址与令牌由构建期注入 feedback_config.json（公开仓库不含密钥），
+也可用环境变量 VIDEOSAVER_FEEDBACK_RELAY / VIDEOSAVER_FEEDBACK_TOKEN 覆盖。
+中继没配好、令牌失效或断网时，内容会存进本机 feedback_outbox.json 待发队列，
+后台每两分钟自动重发；界面同时提供 GitHub Issue 预填链接作为兜底。
+接口：POST /api/feedback（返回 via=relay/queued）、GET /api/feedback/status、
+POST /api/feedback/retry。反馈不会再用本机 config.json 里的 SMTP，
+旧版 /api/smtp 只留着兼容，界面已不再展示。
+用户问「反馈发不出去怎么办」时，答：内容已存本机会自动重发，或点弹窗里的「去 GitHub 提 Issue」；
+不要让用户配置自己的邮箱、授权码或 SMTP。
 
 ## 嗅探浏览器
 顶栏「嗅探」打开右侧栏，填视频页网址会在一个独立小窗里打开真实网页。页面自己完成签名/登录，
@@ -8372,6 +8512,8 @@ def main():
     _migrate_legacy()
     CONFIG = load_config()
     threading.Thread(target=purge_old_trash, daemon=True).start()
+    # 之前没发出去的反馈，联网后静默补发；用户不需要做任何操作
+    threading.Thread(target=feedback_retry_loop, daemon=True).start()
 
     if not YTDLP or (os.path.isabs(YTDLP) and not os.path.exists(YTDLP)):
         print("未找到 yt-dlp：", YTDLP or "(空)")

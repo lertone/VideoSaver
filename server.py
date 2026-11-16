@@ -480,6 +480,8 @@ def flush_feedback_outbox():
             "kind": it.get("kind", "text"), "text": it.get("text", ""),
             "version": it.get("version", APP_VERSION),
             "platform": it.get("platform", ""),
+            "meta": {"version": it.get("version", APP_VERSION),
+                     "platform": it.get("platform", "")},
         })
         if ok:
             done.append(it.get("id"))
@@ -4975,9 +4977,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         relay_url, relay_token = feedback_relay()
         relay_err = ""
         if relay_url:
+            # 顶层 version/platform 给旧版中继，meta 给新版（邮件里显示「环境信息」）
             ok, err = post_feedback_relay(relay_url, relay_token, {
                 "kind": kind, "text": text,
                 "version": APP_VERSION, "platform": platform.platform(),
+                "meta": {"version": APP_VERSION, "platform": platform.platform()},
             })
             if ok:
                 # 顺手把之前排队的内容一起补发，用户无感

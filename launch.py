@@ -373,22 +373,20 @@ def main():
             say("旧版本（%s）正在运行，本次直接沿用它的服务，不做任何中断。" % (running or "未知"))
             return 0
         busy = (not fresh) and is_busy(port)
-        choice = 6
-        if busy:
-            # 只有正在下载才值得问一句；空闲时直接换新，否则「立即运行」像没反应
-            try:
-                import ctypes
-                choice = ctypes.windll.user32.MessageBoxW(
-                    None,
-                    "检测到旧版本（%s）还在运行，而且正在下载。\n\n"
-                    "点「是」：结束旧版本并启动新版本 %s（下载会中断）。\n"
-                    "点「否」：先继续用旧版本，等下载完再换。"
-                    % (running or "未知", APP_VERSION),
-                    APP_TITLE, 0x00000004 | 0x00000020 | 0x00040000)  # YESNO|问号|置顶
-            except Exception:
-                choice = 7
-        else:
-            say("检测到旧版本（%s），直接换成 %s。" % (running or "未知", APP_VERSION))
+        # 以前空闲时是「静默杀掉旧进程、直接换新」，用户点了另一个图标，
+        # 正在用的窗口就无声无息没了。破坏性操作必须问一句。
+        try:
+            import ctypes
+            tip = ("检测到另一个 VideoSaver 正在运行：\n%s\n\n"
+                   % (running_exe or running or "路径未知"))
+            if busy:
+                tip += "它正在下载，切换会中断下载。\n\n"
+            tip += ("点「是」：结束它，改用这一份（%s）。\n"
+                    "点「否」：直接打开正在运行的那个窗口。" % APP_VERSION)
+            choice = ctypes.windll.user32.MessageBoxW(
+                None, tip, APP_TITLE, 0x00000004 | 0x00000020 | 0x00040000)  # YESNO|问号|置顶
+        except Exception:
+            choice = 7
         if choice != 6:
             say("继续使用正在运行的旧版本。")
             url = "http://localhost:%d/" % port

@@ -310,8 +310,12 @@
   /* 嗅探网址的历史下拉：点一下输入框就出来，最多 6 条 */
   .sniff-hist {
     position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 40;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    box-shadow: 0 14px 34px rgba(0,0,0,.45); overflow: hidden;
+    /* 底色写死不透明：玻璃主题下 var(--panel) 是半透明的，
+       下拉会透出后面的说明文字，两行字叠在一起糊成一片 */
+    background: #1a1e26;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.6); overflow: hidden;
   }
   .sniff-hist[hidden] { display: none; }
   .sniff-hist .hi {
@@ -2534,6 +2538,13 @@
           <button class="iconbtn" id="residueScan" style="flex:1">重新统计</button>
           <button class="iconbtn" id="residueClean" style="flex:1">一键清理</button>
         </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="iconbtn" id="openLogBtn" style="flex:1"
+                  title="用记事本打开运行日志 app.log，出错时把末尾几行发我">查看日志</button>
+          <button class="iconbtn" id="openDataBtn" style="flex:1"
+                  title="配置、登录信息、日志、AI 记忆都在这里">打开数据目录</button>
+        </div>
+        <div class="statusline" id="logHint" style="margin-top:6px"></div>
       </div>
 
       <div class="group">
@@ -5996,6 +6007,25 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   });
 
   loadAI();
+
+  /* ---------- 维护：查看日志 / 打开数据目录 ---------- */
+  (function logUI() {
+    if (!$("openLogBtn")) return;
+    async function hit(path, label) {
+      const el = $("logHint");
+      try {
+        const j = await api(path, {});
+        el.textContent = j.ok ? ("已打开" + label + "：" + (j.path || ""))
+                              : ("打不开：" + (j.error || "未知"));
+        el.className = "statusline " + (j.ok ? "ok" : "bad");
+      } catch (e) {
+        el.textContent = "打不开：" + e;
+        el.className = "statusline bad";
+      }
+    }
+    $("openLogBtn").onclick = () => hit("/api/open-log", "日志");
+    $("openDataBtn").onclick = () => hit("/api/open-data-dir", "数据目录");
+  })();
 
   restoreChoices();
   (async () => {                       // 头部显示当前版本，便于确认是否已更新

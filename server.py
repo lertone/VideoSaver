@@ -1109,7 +1109,72 @@ def _cdp_call(ws, mid, method, params=None, wait=2.5):
     return None
 
 
-def _cdp_sniff(port, proc, want_url=""):
+def _chrome_windows():
+    """列出当前所有可见的浏览器顶层窗口（Edge/Chrome 的类名都是 Chrome_WidgetWin_1）。"""
+    if not IS_WIN:
+        return set()
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        found = set()
+
+        def _cb(hwnd, _lparam):
+            try:
+                if user32.IsWindowVisible(hwnd) and user32.GetWindowTextLengthW(hwnd) > 0:
+                    buf = ctypes.create_unicode_buffer(64)
+                    user32.GetClassNameW(hwnd, buf, 64)
+                    if buf.value == "Chrome_WidgetWin_1":
+                        found.add(int(hwnd))
+            except Exception:
+                pass
+            return True
+
+        user32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND,
+                                             wintypes.LPARAM)(_cb), 0)
+        return found
+    except Exception:
+        return set()
+
+
+def _bring_browser_front(before=None, wait=8.0):
+    """把新开的嗅探窗口提到最前。
+
+    CDP 的 Page.bringToFront 只激活标签页，Windows 还会继续把它压在后台
+    （系统不允许非前台进程随便抢焦点）。这里按「启动前后窗口差集」认出那个新窗口，
+    先模拟一次 Alt 解除前台锁，再 SetForegroundWindow。
+    """
+    if not IS_WIN:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+    except Exception:
+        return False
+    before = before or set()
+    target = 0
+    end = time.time() + wait
+    while time.time() < end and not target:
+        fresh = [h for h in _chrome_windows() if h not in before]
+        if fresh:
+            target = fresh[-1]
+            break
+        time.sleep(0.4)
+    if not target:
+        return False
+    try:
+        user32.keybd_event(0x12, 0, 0, 0)        # Alt 按下
+        user32.keybd_event(0x12, 0, 2, 0)        # Alt 抬起，解除前台锁
+        user32.ShowWindow(target, 9)             # SW_RESTORE
+        user32.SetForegroundWindow(target)
+        user32.BringWindowToTop(target)
+        return True
+    except Exception:
+        return False
+
+
+def _cdp_sniff(port, proc, want_url="", before=None):
     """连上 Edge 的调试端口，只读网络事件，收集媒体地址。"""
     try:
         import websocket
@@ -1137,20 +1202,18 @@ def _cdp_sniff(port, proc, want_url=""):
     except Exception as e:
         _SNIFF["error"] = "连不上 Edge 调试端口：%s" % str(e)[:100]
         return
-    # 关键顺序：先启用 Network → 注入已导入的登录态 → 再导航。
-    # 以前是带着 url 直接启动浏览器，页面按游客身份加载完了才连上调试端口，
-    # 需要登录才肯出流的站点（B 站、微博、部分抖音页）根本抓不到地址。
+    # 启动时已经带着 url 打开了页面；这里补上登录态后重载一次。
+    # 之前改成「先开 about:blank 再 Page.navigate」，但连的可能不是刚开的那个
+    # 标签页，结果用户看到的就是一片 about:blank。
     cookies, ck_mode = _sniff_cookies_for(want_url)
     _SNIFF["cookies"] = len(cookies)
     _SNIFF["cookie_mode"] = ck_mode
     _cdp_call(ws, 1, "Network.enable", {}, wait=1.2)
     if cookies:
         _cdp_call(ws, 2, "Network.setCookies", {"cookies": cookies}, wait=3.0)
-    if want_url:
-        _cdp_call(ws, 3, "Page.navigate", {"url": want_url}, wait=1.5)
-    # 把嗅探窗口提到最前。Windows 默认不允许后台程序抢焦点，
-    # 光靠 AllowSetForegroundWindow 只是「允许」没人去抢，这里用 CDP 激活标签页。
+        _cdp_call(ws, 3, "Page.reload", {"ignoreCache": False}, wait=1.5)
     _cdp_call(ws, 4, "Page.bringToFront", {}, wait=1.0)
+    _bring_browser_front(before)
     seen = set()
     while proc.poll() is None:
         try:
@@ -1219,20 +1282,22 @@ def _sniff_open(url):
         profile = os.path.join(tempfile.gettempdir(), "VideoSaver_sniff")
         os.makedirs(profile, exist_ok=True)
     _allow_foreground()
+    before = _chrome_windows()
     try:
-        # 先开 about:blank，等 CDP 把登录态注进去再导航到目标页（见 _cdp_sniff）。
-        # 直接带 url 启动的话，页面会先按游客身份加载完，登录后才出流的站点就抓空了。
+        # 直接带 url 打开（用户一眼看到的就是目标页），登录态在 CDP 连上后注入并重载。
+        # --start-maximized 让窗口足够显眼，配合下面的置顶，避免又藏在主界面后面。
         proc = subprocess.Popen(
             [edge, "--remote-debugging-port=%d" % port,
              "--user-data-dir=" + profile, "--no-first-run",
              "--no-default-browser-check", "--disable-sync",
-             "--new-window", "about:blank"],
+             "--start-maximized", "--new-window", url],
             creationflags=NO_WINDOW)
     except Exception as e:
         return False, "Edge 启动失败：%s" % str(e)[:140]
-    _SNIFF.update({"proc": proc, "error": "", "page": url, "cookies": 0, "cookie_mode": ""})
+    _SNIFF.update({"proc": proc, "error": "", "page": url, "cookies": 0, "cookie_mode": "",
+                   "port": port})
     _SNIFF["items"].clear()
-    threading.Thread(target=_cdp_sniff, args=(port, proc, url), daemon=True).start()
+    threading.Thread(target=_cdp_sniff, args=(port, proc, url, before), daemon=True).start()
     return True, ""
 
 
@@ -4333,6 +4398,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                             "items": items[:60]})
                 if self.path == "/api/residue/clean":
                     return self._send_json(clean_residue())
+                if self.path == "/api/open-log":
+                    return self.handle_open_log()
+                if self.path == "/api/open-data-dir":
+                    return self.handle_open_data_dir()
                 if self.path == "/api/sniff/clear":
                     _SNIFF["items"].clear()
                     return self._send_json({"ok": True})
@@ -5527,6 +5596,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             dir_history_add(str(data["add"]))
         return self._send_json({"ok": True, "items": dir_history_list()})
 
+    def handle_open_log(self):
+        """用记事本打开运行日志，省得用户自己去翻隐藏目录。"""
+        path = os.path.join(DATA_DIR, "logs", "app.log")
+        if not os.path.isfile(path):
+            return self._send_json({"ok": False, "error": "还没有日志文件（刚启动的话稍等几秒）"})
+        try:
+            if IS_WIN:
+                subprocess.Popen(["notepad.exe", path], creationflags=NO_WINDOW)
+            else:
+                open_path(path)
+        except Exception as e:
+            return self._send_json({"ok": False, "error": str(e)[:100], "path": path})
+        return self._send_json({"ok": True, "path": path})
+
+    def handle_open_data_dir(self):
+        """打开配置 / 登录信息 / 日志所在的数据目录。"""
+        try:
+            open_path(DATA_DIR)
+        except Exception as e:
+            return self._send_json({"ok": False, "error": str(e)[:100], "path": DATA_DIR})
+        return self._send_json({"ok": True, "path": DATA_DIR})
+
     def handle_app_check(self):
         """顶栏版本检测：比对当前版本和 GitHub 最新 Release。"""
         latest, err = app_latest_version()
@@ -6279,8 +6370,39 @@ def _kill_other_instances():
         pass
 
 
+def _stop_watchdog():
+    """退出时先把看门狗收掉。
+
+    以前只写 watchdog.stop 文件等它自己发现，但看门狗每 5 秒才看一眼，
+    这中间一旦它先判定「服务挂了」就会把主程序又拉起来 ——
+    用户看到的就是「明明托盘退出了，一会儿又冒出来一个」。
+    """
+    try:
+        with open(os.path.join(DATA_DIR, "watchdog.pid"), "r", encoding="utf-8") as f:
+            pid = int((f.read() or "0").strip() or 0)
+    except Exception:
+        return
+    if not pid or pid == os.getpid():
+        return
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                       capture_output=True, timeout=6, creationflags=NO_WINDOW)
+    except Exception:
+        pass
+
+
+def _close_sniffer():
+    """嗅探浏览器是程序开的，退出时一起关，别在后台留个 Edge 窗口。"""
+    try:
+        proc = _SNIFF.get("proc")
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+    except Exception:
+        pass
+
+
 def _hard_exit():
-    """用户主动退出：写停止标志 → 停托盘 → 清残留 → 结束自身。"""
+    """用户主动退出：写停止标志 → 停看门狗 → 停托盘 → 清自己的子进程 → 结束自身。"""
     try:
         with open(os.path.join(DATA_DIR, "watchdog.stop"), "w", encoding="utf-8") as f:
             f.write(str(int(time.time())))
@@ -6292,7 +6414,11 @@ def _hard_exit():
             _TRAY["icon"].stop()
     except Exception:
         pass
-    _kill_other_instances()
+    _stop_watchdog()
+    _close_sniffer()
+    # 注意：这里刻意不再调用 _kill_other_instances()。
+    # 以前退出时按镜像名把所有 VideoSaver.exe 全杀掉，等于「关掉一个窗口把另一个也带走」，
+    # 装着两个构建时尤其明显。自己的资源自己收，别人的不碰。
     os._exit(0)
 
 

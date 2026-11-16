@@ -120,7 +120,9 @@ def build(onefile=False):
         # 窗口程序：不要控制台黑窗。日志由 launch.py 写进
         # %LOCALAPPDATA%\VideoSaver\logs\app.log，起不来会弹对话框。
         "--windowed",
-        "--add-data", "index.html" + SEP + ".",
+        # 目标要给文件名，不能写 "."：PyInstaller 6 会建出 `index.html/` 同名目录，
+        # 文件被塞进 `_internal/index.html/index.html`。
+        "--add-data", "index.html" + SEP + "index.html",
         # 反馈中继配置（公开仓库里为空，正式发版由构建注入）。
         # 目标写成 "." 时 PyInstaller 6 会建出 `feedback_config.json/` 同名目录，
         # 文件被塞进 `_internal/feedback_config.json/feedback_config.json`；

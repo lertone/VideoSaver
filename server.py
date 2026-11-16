@@ -1148,6 +1148,9 @@ def _cdp_sniff(port, proc, want_url=""):
         _cdp_call(ws, 2, "Network.setCookies", {"cookies": cookies}, wait=3.0)
     if want_url:
         _cdp_call(ws, 3, "Page.navigate", {"url": want_url}, wait=1.5)
+    # 把嗅探窗口提到最前。Windows 默认不允许后台程序抢焦点，
+    # 光靠 AllowSetForegroundWindow 只是「允许」没人去抢，这里用 CDP 激活标签页。
+    _cdp_call(ws, 4, "Page.bringToFront", {}, wait=1.0)
     seen = set()
     while proc.poll() is None:
         try:
@@ -2066,6 +2069,23 @@ def ver_tuple(v):
     return tuple(nums) if nums else (0,)
 
 
+APP_RELEASE_API = "https://api.github.com/repos/lertone/VideoSaver/releases/latest"
+
+
+def app_latest_version():
+    """查本项目最新 Release 的版本号。失败返回 ("", 原因)，不抛异常。"""
+    try:
+        req = urllib.request.Request(
+            APP_RELEASE_API,
+            headers={"User-Agent": APP_NAME + "/" + APP_VERSION,
+                     "Accept": "application/vnd.github+json"})
+        with proxy_opener(APP_RELEASE_API, timeout=10).open(req, timeout=10) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        return str(d.get("tag_name") or "").strip().lstrip("vV"), ""
+    except Exception as e:
+        return "", str(e)[:120]
+
+
 def proxy_opener(url, timeout=30):
     """按当前设置给一次性下载挑条代理；没有可用代理就直连。"""
     cfg = get_config()
@@ -2339,9 +2359,22 @@ def resolve_kuaishou(url, proxy=""):
     return {"url": direct, "title": title[:60]}, ""
 
 
+def _dy_key(dy):
+    """按服务类型取对应的密钥。
+
+    DTK 的 API Key（dtk_ 开头）和 Tikhub 的 Token 是两家完全不同的东西，
+    以前共用 api_key 一个字段，切服务类型就互相覆盖。
+    现在分开存：api_key 给自建 DTK，tikhub_key 给托管；旧配置没拆开的还能兜住。
+    """
+    provider = (dy.get("provider") or "dtk").lower()
+    if provider == "tikhub":
+        return str(dy.get("tikhub_key") or dy.get("api_key") or "").strip()
+    return str(dy.get("api_key") or "").strip()
+
+
 def douyin_ready(cfg):
     dy = cfg.get("douyin") or {}
-    if not (dy.get("api_key") or "").strip():
+    if not _dy_key(dy):
         return False
     if (dy.get("provider") or "dtk").lower() == "tikhub":
         return True          # Tikhub 走官方托管地址，只要 Token 填了就算就绪
@@ -2632,7 +2665,7 @@ def resolve_douyin(url, cfg):
     """
     dy = cfg.get("douyin") or {}
     endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
-    key = (dy.get("api_key") or "").strip()
+    key = _dy_key(dy)
     provider = (dy.get("provider") or "dtk").lower()
     if provider == "tikhub":
         endpoint = TIKHUB_BASE    # 托管地址固定，忽略设置里残留的自建网关地址
@@ -4049,26 +4082,40 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Chrome 的私有网络访问检查：从公网页面访问 127.0.0.1 会要求这个头
         self.send_header("Access-Control-Allow-Private-Network", "true")
 
+    def _write_body(self, body):
+        """写响应。页面刷新/关闭时对端会先断开，这属于正常情况，
+        以前会把 ConnectionAbortedError 抛到上层，日志里刷一堆假 Traceback。"""
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            pass
+
     def _send_json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self._cors()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self._cors()
+            self.end_headers()
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+        self._write_body(body)
 
     def _send_text(self, text, code=200, content_type="text/plain; charset=utf-8"):
         body = text.encode("utf-8") if isinstance(text, str) else text
-        self.send_response(code)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        if "text/html" in content_type:
-            self.send_header("Cache-Control", "no-store, must-revalidate")
-            self.send_header("Pragma", "no-cache")
-        self._cors()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            if "text/html" in content_type:
+                self.send_header("Cache-Control", "no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+            self._cors()
+            self.end_headers()
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+        self._write_body(body)
 
     def _consume_body(self):
         """一进 POST 就把请求体读完并缓存。
@@ -4156,6 +4203,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self._send_json(list_sites(q))
                 if self.path == "/api/residue":
                     return self._send_json(scan_residue())
+                if self.path == "/api/app/check":
+                    return self.handle_app_check()
                 if self.path == "/api/sniff/list":
                     items = sorted(_SNIFF["items"].values(), key=lambda x: -x["ts"])
                     return self._send_json({"ok": True, "page": _SNIFF["page"],
@@ -5478,6 +5527,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             dir_history_add(str(data["add"]))
         return self._send_json({"ok": True, "items": dir_history_list()})
 
+    def handle_app_check(self):
+        """顶栏版本检测：比对当前版本和 GitHub 最新 Release。"""
+        latest, err = app_latest_version()
+        if not latest:
+            return self._send_json({"ok": False, "current": APP_VERSION, "error": err})
+        return self._send_json({
+            "ok": True, "current": APP_VERSION, "latest": latest,
+            "has_new": ver_tuple(latest) > ver_tuple(APP_VERSION),
+            "url": "https://github.com/lertone/VideoSaver/releases/latest"})
+
     def handle_ytdlp_check(self):
         """静默检查是否有新版解析引擎；连不上就返回 ok:False，不打扰用户。"""
         cur = ytdlp_version()
@@ -5538,14 +5597,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         """检测服务：网关 /readyz、原生 DTK /openapi.json、或误填的静态网页。"""
         cfg = get_config()
         dy = cfg.get("douyin") or {}
-        endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
-        if not endpoint:
-            return self._send_json({"ok": False, "error": "没填服务地址"})
-        if not endpoint.lower().startswith(("http://", "https://")):
-            endpoint = "http://" + endpoint
-        has_key = bool((dy.get("api_key") or "").strip())
         provider = (dy.get("provider") or "dtk").lower()
-        key = (dy.get("api_key") or "").strip()
+        has_key = bool(_dy_key(dy))
+        key = _dy_key(dy)
+        # Tikhub 用固定的托管地址，不需要填服务地址，所以必须在 endpoint 校验之前处理。
+        # 之前顺序反了：切到 Tikhub 后仍然先查「没填服务地址」，永远测不过。
         if provider == "tikhub":
             if not has_key:
                 return self._send_json({"ok": False, "kind": "tikhub",
@@ -5555,6 +5611,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     "key_ok": key_ok,
                                     "error": "" if key_ok else key_msg,
                                     "hint": "Tikhub Token 有效" if key_ok else ""})
+        endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
+        if not endpoint:
+            return self._send_json({"ok": False, "error": "没填服务地址"})
+        if not endpoint.lower().startswith(("http://", "https://")):
+            endpoint = "http://" + endpoint
         last = ""
         try:
             opener = proxy_opener(endpoint + "/readyz", timeout=12)
@@ -5874,7 +5935,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._write("[小红书] 正在通过 Tikhub 取直链…\n")
                     info, why = _tikhub_xhs(origin_url,
                                             TIKHUB_BASE,
-                                            (dy_cfg.get("api_key") or "").strip())
+                                            _dy_key(dy_cfg))
                     if info:
                         dtk = info
                         url = info["url"]

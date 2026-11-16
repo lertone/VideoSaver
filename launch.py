@@ -287,7 +287,15 @@ def watchdog_main():
             fails = 0
         else:
             fails += 1
-            if fails >= 3:
+            # 连续 30 秒（6 次 × 5 秒）没响应才认定真挂了。以前 15 秒就动手，
+            # 碰上合并 4K 分片、杀软全盘扫描这类瞬时卡顿，会把正常服务误判成崩溃，
+            # 结果就是「后台老是掉」的观感——其实是被自己人重启的。
+            if fails >= 6:
+                # 动手前用更宽松的超时再确认一次，别冤枉一个正在忙的服务
+                if port and ping(port, timeout=3.5):
+                    fails = 0
+                    time.sleep(5)
+                    continue
                 try:
                     subprocess.Popen(_self_cmd(), cwd=APP_DIR, close_fds=True,
                                      creationflags=DETACHED | CREATE_NO_WINDOW,
@@ -300,7 +308,7 @@ def watchdog_main():
                     logs = os.path.join(data_dir(), "logs")
                     os.makedirs(logs, exist_ok=True)
                     with open(os.path.join(logs, "app.log"), "a", encoding="utf-8") as f:
-                        f.write("\n[看门狗] %s 检测到服务停止，已自动重启主程序\n"
+                        f.write("\n[看门狗] %s 连续 30 秒无响应，已自动重启主程序\n"
                                 % time.strftime("%Y-%m-%d %H:%M:%S"))
                 except Exception:
                     pass

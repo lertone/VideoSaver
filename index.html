@@ -44,7 +44,12 @@
           display: grid; place-items: center; flex: none; }
   .logo svg { width: 17px; height: 17px; fill: #fff; }
   .brand { font-size: 16px; font-weight: 600; letter-spacing: .3px; }
-  .tagline { color: var(--muted); font-size: 12px; }
+  .tagline { color: var(--muted); font-size: 12px; cursor: pointer; }
+  /* 版本检测结果：最新绿、有新版本用警示色、失败保持静默 */
+  .tagline .verstate { margin-left: 6px; }
+  .tagline .verstate.ok { color: var(--accent2); }
+  .tagline .verstate.new { color: var(--warn); font-weight: 600; }
+  .tagline .verstate.bad { color: var(--muted); opacity: .75; }
   .top .spacer { flex: 1; }
   .light { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -295,12 +300,28 @@
   .fbqueue { color: var(--muted); }
   .sniffdrawer { width: min(440px, 94vw); }
   .sniff-top { display: flex; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  .sniff-input { position: relative; flex: 1; min-width: 0; }
   .sniff-top input {
-    flex: 1; min-width: 0; height: 34px; padding: 0 10px; font-size: 12px;
+    width: 100%; height: 34px; padding: 0 10px; font-size: 12px;
     border-radius: 9px; border: 1px solid var(--line);
     background: var(--panel2); color: var(--text); outline: none;
   }
   .sniff-top input:focus { border-color: var(--accent); }
+  /* 嗅探网址的历史下拉：点一下输入框就出来，最多 6 条 */
+  .sniff-hist {
+    position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 40;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 14px 34px rgba(0,0,0,.45); overflow: hidden;
+  }
+  .sniff-hist[hidden] { display: none; }
+  .sniff-hist .hi {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap;
+  }
+  .sniff-hist .hi:hover { background: rgba(91,140,255,.16); }
+  .sniff-hist .hi span { overflow: hidden; text-overflow: ellipsis; }
+  .sniff-hist .hi svg { width: 13px; height: 13px; flex: none; opacity: .5;
+                        fill: none; stroke: currentColor; stroke-width: 1.8; }
   .sniff-top .btn { flex: none; padding: 8px 14px; font-size: 12px; min-width: 0; }
   .sniff-note { padding: 8px 12px; font-size: 11px; line-height: 1.7; color: var(--muted); }
   .sniff-list { flex: 1; overflow-y: auto; padding: 0 12px 12px; display: flex;
@@ -1972,7 +1993,10 @@
     <div class="logo"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
     <div>
       <div class="brand">VideoSaver</div>
-      <div class="tagline">粘贴链接，一键保存到本机 <span id="verTag" style="opacity:.5"></span></div>
+      <div class="tagline" id="verLine" title="点一下检查是否有新版本">
+        <span id="verTag" style="opacity:.6"></span>
+        <span id="verState" class="verstate">检查更新中…</span>
+      </div>
     </div>
     <div class="spacer"></div>
     <div class="light" id="light"><span class="dot"></span><span id="lightText">正在检查…</span></div>
@@ -2269,7 +2293,10 @@
     <button class="iconbtn" id="sniffClose" style="padding:3px 8px">×</button>
   </div>
   <div class="sniff-top">
-    <input id="sniffUrl" type="text" placeholder="粘贴视频页网址，回车打开" autocomplete="off" />
+    <div class="sniff-input">
+      <input id="sniffUrl" type="text" placeholder="粘贴视频页网址，回车打开" autocomplete="off" />
+      <div class="sniff-hist" id="sniffHist" hidden></div>
+    </div>
     <button class="btn primary" id="sniffGo">打开</button>
   </div>
   <div class="sniff-note">
@@ -2595,9 +2622,13 @@
           <label>服务地址</label>
           <input type="text" id="dyEndpoint" placeholder="例如 http://127.0.0.1:8000（填根地址，不要带 /api/...）" />
         </div>
-        <div class="field">
+        <div class="field" id="dyKeyField">
           <label id="dyKeyLabel">API Key</label>
           <input type="text" id="dyKey" placeholder="dtk_xxxxx（DTK 控制台 → API Key → 勾 douyin:read）" />
+        </div>
+        <div class="field" id="dyTikhubField">
+          <label>Tikhub Token</label>
+          <input type="text" id="dyTikhubKey" placeholder="Tikhub 用户中心 → API Keys 创建的 Token（不是 dtk_ 开头）" />
         </div>
         <div style="display:flex;gap:8px;margin-top:4px">
           <button class="iconbtn" id="dyTest">测一下服务通不通</button>
@@ -3127,9 +3158,10 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       },
       douyin: {
         provider: $("dyProvider").value,
-        // Tikhub 是托管服务，地址固定，不把上次自建网关的地址顺手存进去
+        // 自建才存地址；两套凭证各存各的，切换不会互相覆盖
         endpoint: $("dyProvider").value === "tikhub" ? "" : $("dyEndpoint").value.trim(),
         api_key: $("dyKey").value.trim(),
+        tikhub_key: $("dyTikhubKey").value.trim(),
         user_agent: $("dyUA").value.trim()
       },
       youtube: {
@@ -3152,6 +3184,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       $("dyProvider").value = dy.provider || "dtk";
       $("dyEndpoint").value = dy.endpoint || "";
       $("dyKey").value = dy.api_key || "";
+      // 旧配置把 Tikhub Token 存在 api_key 里，搬家到新字段，避免用户以为丢了
+      $("dyTikhubKey").value = dy.tikhub_key ||
+        ((dy.provider || "dtk") === "tikhub" ? (dy.api_key || "") : "");
       $("dyUA").value = dy.user_agent || "";
       if (typeof syncDyProvider === "function") syncDyProvider();   // 按当前类型决定藏不藏地址
       $("cookieMode").value = c.cookies.mode;
@@ -4682,13 +4717,13 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
      从 DTK 切过来时还留着自建地址，测试和解析全打到了旧网关上。 */
   function syncDyProvider() {
     const t = $("dyProvider").value === "tikhub";
+    // 两套凭证完全分开：自建 DTK 用 API Key，Tikhub 用 Token，谁也不覆盖谁
     const epField = $("dyEpField");
     if (epField) epField.style.display = t ? "none" : "";
-    const kl = $("dyKeyLabel");
-    if (kl) kl.textContent = t ? "Tikhub Token" : "API Key";
-    $("dyEndpoint").placeholder = "例如 http://127.0.0.1:8000（根地址，不要带 /api/...）";
-    $("dyKey").placeholder = t ? "粘贴 Tikhub 的 API Token（不是 dtk_ 开头）"
-                              : "dtk_xxxxx（DTK 控制台 → API Key → 勾 douyin:read）";
+    const kf = $("dyKeyField");
+    if (kf) kf.style.display = t ? "none" : "";
+    const tf = $("dyTikhubField");
+    if (tf) tf.style.display = t ? "" : "none";
     const btn = $("dyTest");
     if (btn) btn.textContent = t ? "测一下 Token 能不能用" : "测一下服务通不通";
     const note = $("dyNote");
@@ -4696,9 +4731,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       ? 'Tikhub 是官方托管服务，<b>地址固定为 <code>api.tikhub.io</code></b>，不用填服务器。' +
         '去 <a href="https://www.tikhub.io" target="_blank" rel="noopener">tikhub.io</a> 注册，' +
         '用户中心 → API Keys 创建 Token，粘到上面即可。按量计费，余额或权限不足会返回 401/402/403。'
-      : '自建 DTK / 网关 / Tikhub 托管都支持。地址填<b>根地址</b>（如 <code>http://IP:8000</code>' +
-        ' 或 <code>https://api.tikhub.io</code>），不要带 <code>/api/...</code>。' +
-        '测服务返回 501 / 网页，说明填成了静态服务器或前端端口。';
+      : '自建 DTK / 网关：地址填<b>根地址</b>（如 <code>http://IP:8000</code> 或 ' +
+        '<code>http://127.0.0.1:8000</code>），不要带 <code>/api/...</code>。' +
+        'Key 是 DTK 控制台里以 <code>dtk_</code> 开头的那串。';
   }
   $("dyProvider").onchange = syncDyProvider;
   $("dyTest").onclick = async () => {
@@ -5175,15 +5210,23 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   /* ---- 后台服务心跳：进程如果挂了，页面会变成"僵尸"（点哪都没反应） ---- */
   let offlineFails = 0, wasOffline = false;
   async function heartbeat() {
+    let tid = 0;
     try {
-      const r = await fetch("/api/ping", { cache: "no-store" });
+      // 加 5 秒超时：合并大文件时服务可能一时答不上来。以前没超时，
+      // 请求会一直挂着，要么永远不提示、要么被浏览器直接判失败，观感很随机。
+      const ctl = new AbortController();
+      tid = setTimeout(() => ctl.abort(), 5000);
+      const r = await fetch("/api/ping", { cache: "no-store", signal: ctl.signal });
+      clearTimeout(tid);
       if (!r.ok) throw new Error("bad");
       offlineFails = 0;
       $("offlineBar").hidden = true;
       if (wasOffline) { wasOffline = false; location.reload(); return; }
     } catch (e) {
+      clearTimeout(tid);
       offlineFails++;
-      if (offlineFails >= 2) { wasOffline = true; $("offlineBar").hidden = false; }
+      // 连续 3 次（约 15 秒）才提示，一次卡顿不该吓人
+      if (offlineFails >= 3) { wasOffline = true; $("offlineBar").hidden = false; }
     }
   }
   $("offlineRetry").onclick = async () => {
@@ -5961,6 +6004,43 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       if (j && j.version) $("verTag").textContent = "v" + j.version;
     } catch (e) {}
   })();
+
+  /* ---- 版本检测：拉 GitHub 最新 Release，比对后才提示，不再只写死一句标语 ---- */
+  async function checkAppVersion() {
+    const el = $("verState");
+    if (!el) return;
+    el.className = "verstate";
+    el.textContent = "检查更新中…";
+    delete el.dataset.url;
+    try {
+      const j = await api("/api/app/check");
+      if (!j || !j.ok) {
+        el.textContent = "检查更新失败（点此重试）";
+        el.classList.add("bad");
+        return;
+      }
+      if (j.has_new) {
+        el.textContent = "有新版本 v" + j.latest + "（点此查看）";
+        el.classList.add("new");
+        if (j.url) el.dataset.url = j.url;
+      } else {
+        el.textContent = "已是最新";
+        el.classList.add("ok");
+      }
+    } catch (e) {
+      el.textContent = "检查更新失败（点此重试）";
+      el.classList.add("bad");
+    }
+  }
+  if ($("verLine")) {
+    $("verLine").onclick = () => {
+      const el = $("verState");
+      const u = el && el.dataset.url;
+      if (u) { api("/api/open-url", { url: u }).catch(() => {}); return; }
+      checkAppVersion();               // 没新版本 / 上次失败 → 再查一次
+    };
+    setTimeout(checkAppVersion, 1500);
+  }
   loadSettings();
   checkEnv();
   loadFiles();
@@ -7084,11 +7164,61 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       try { await api("/api/sniff/clear", {}); } catch (e) {}
       refresh();
     };
+    /* 网址历史：最多留 6 条，存在本机，点输入框就弹出来 */
+    const HIST_KEY = "ves_sniff_hist";
+    const HIST_MAX = 6;
+    const CLOCK_SVG = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/>' +
+                      '<path d="M12 7.4V12l3.1 1.9"/></svg>';
+    function histRead() {
+      try {
+        const a = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+        return Array.isArray(a) ? a.filter(x => typeof x === "string" && x).slice(0, HIST_MAX) : [];
+      } catch (e) { return []; }
+    }
+    function histPush(u) {
+      u = String(u || "").trim();
+      if (!u) return;
+      const list = histRead().filter(x => x !== u);
+      list.unshift(u);
+      try { localStorage.setItem(HIST_KEY, JSON.stringify(list.slice(0, HIST_MAX))); } catch (e) {}
+    }
+    function histPaint() {
+      const box = $("sniffHist");
+      if (!box) return;
+      const list = histRead();
+      if (!list.length) { box.hidden = true; return; }
+      box.innerHTML = list.map(u =>
+        '<div class="hi" data-url="' + esc(u) + '" title="' + esc(u) + '">' + CLOCK_SVG +
+        '<span>' + esc(u.replace(/^https?:\/\//, "")) + '</span></div>').join("");
+      box.hidden = false;
+    }
+    function histHide() { const b = $("sniffHist"); if (b) b.hidden = true; }
+    if ($("sniffUrl")) {
+      $("sniffUrl").addEventListener("focus", histPaint);
+      $("sniffUrl").addEventListener("click", histPaint);
+      $("sniffUrl").addEventListener("input", histHide);
+    }
+    if ($("sniffHist")) {
+      $("sniffHist").addEventListener("mousedown", e => {
+        // 用 mousedown：click 之前输入框会先失焦，下拉就没了
+        const it = e.target.closest(".hi");
+        if (!it) return;
+        e.preventDefault();
+        $("sniffUrl").value = it.dataset.url;
+        histHide();                       // 选完立即收起
+        $("sniffUrl").focus();
+      });
+    }
+    document.addEventListener("mousedown", e => {
+      if (!e.target.closest(".sniff-input")) histHide();
+    });
+
     async function openPage() {
       const url = $("sniffUrl").value.trim();
       if (!url) { toast("先填网址", "bad"); return; }
+      histHide();
       const j = await api("/api/sniff/open", { url: url });
-      if (j.ok) toast("已打开嗅探窗口，播放视频即可", "ok");
+      if (j.ok) { histPush(url); toast("已打开嗅探窗口，播放视频即可", "ok"); }
       else toast(j.error || "打不开嗅探窗口", "bad");
     }
     $("sniffGo").onclick = openPage;

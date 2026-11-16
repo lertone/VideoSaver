@@ -2831,7 +2831,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       <div class="group">
         <h3>常驻要求 · AI 记忆</h3>
         <div class="field">
-          <label>希望 AI 一直遵守的要求（每次对话和任务默认生效，优先级最高）</label>
+          <label>希望 AI 尽量遵守的偏好（每次对话都会带上，用来少问几个问题；不覆盖事实与安全边界）</label>
           <textarea id="aiRules" rows="4" placeholder="例如：回答简洁；删除前只确认一次；优先找 B 站源；不要反复反问…"></textarea>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7051,9 +7051,17 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     function render(j) {
       const box = $("sniffList");
       const items = (j && j.items) || [];
-      $("sniffHost").textContent = (j && j.page) ? (() => {
+      const host = (j && j.page) ? (() => {
         try { return new URL(j.page).host; } catch (e) { return ""; }
       })() : "";
+      const ck = (j && j.cookies) || 0;
+      // 让用户知道这次嗅探带没带上登录态：需要登录才出流的站点，没带就抓不到
+      $("sniffHost").textContent = host + (ck ? " · 登录态 " + ck + " 条" : "");
+      $("sniffHost").title = ck
+        ? ("已把导入的 " + ck + " 条 Cookie 注入嗅探浏览器，页面会以登录身份加载")
+        : ((j && j.cookie_mode === "browser")
+            ? "当前是「直接读浏览器 Cookie」模式，嗅探窗口用独立配置，请在设置里改成导入文件"
+            : "这次没带登录态：需要登录才出流的站点会抓不到，先去导入对应站点的 Cookie");
       if (!items.length) { box.innerHTML = '<div class="empty">还没有抓到资源</div>'; return; }
       box.innerHTML = items.map(it =>
         '<div class="si"><span class="k">' + (KIND[it.kind] || "MEDIA") + '</span>' +

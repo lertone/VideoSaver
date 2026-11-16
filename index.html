@@ -6970,9 +6970,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   async function fbRefreshStatus() {
     try {
       const j = await api("/api/feedback/status");
-      if (j && j.ok) _fbStatus = j;
+      // 老版本服务没有这个接口；拿不到状态就别改文案，保持页面上的默认值
+      if (j && j.ok) { _fbStatus = j; fbPaintStatus(); }
     } catch (e) {}
-    fbPaintStatus();
     return _fbStatus;
   }
 
@@ -6993,6 +6993,15 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       : "暂时没送出去的反馈会先存到本机，不用你做任何设置。";
     const rb = $("fbRetry");
     if (rb) rb.hidden = !n || !relay;
+    // 没配中继时不承诺「直接发到作者」，如实说明内容去向与备用渠道
+    const note = $("fbPopNote");
+    if (note) note.textContent = relay
+      ? "写几句话，或点个赞，会直接发给作者，不用配置任何东西。"
+      : "写的内容会先存到本机；点下面的「去 GitHub 提 Issue」也能直接发给作者。";
+    const sNote = $("fbNote");
+    if (sNote) sNote.innerHTML = relay
+      ? '点「点赞」或写几句话，会直接发给作者，<b>不需要你配置邮箱或任何账号</b>。只发送你写的内容、软件版本和系统类型。'
+      : '点「点赞」或写几句话，内容会先存到本机，<b>不需要你配置邮箱或任何账号</b>；也可以点「去 GitHub 提 Issue」直接联系作者。';
   }
 
   function fbIssueUrl(text) {

@@ -120,14 +120,12 @@ def build(onefile=False):
         # 窗口程序：不要控制台黑窗。日志由 launch.py 写进
         # %LOCALAPPDATA%\VideoSaver\logs\app.log，起不来会弹对话框。
         "--windowed",
-        # 目标要给文件名，不能写 "."：PyInstaller 6 会建出 `index.html/` 同名目录，
-        # 文件被塞进 `_internal/index.html/index.html`。
-        "--add-data", "index.html" + SEP + "index.html",
-        # 反馈中继配置（公开仓库里为空，正式发版由构建注入）。
-        # 目标写成 "." 时 PyInstaller 6 会建出 `feedback_config.json/` 同名目录，
-        # 文件被塞进 `_internal/feedback_config.json/feedback_config.json`；
-        # 这里显式给文件名，_internal 下就是干净的平铺结构。
-        "--add-data", "feedback_config.json" + SEP + "feedback_config.json",
+        # --add-data 的 DEST 是「目标目录」，不是文件名：写 "." 才是平铺到 _internal 根。
+        # 之前误以为是文件名，写成 "index.html" 反而多套了一层目录
+        # （_internal/index.html/index.html）。程序仍能跑，因为优先读 exe 同目录那份。
+        "--add-data", "index.html" + SEP + ".",
+        # 反馈中继配置（公开仓库里为空，正式发版由构建注入）
+        "--add-data", "feedback_config.json" + SEP + ".",
         "--hidden-import", "wm_detect",
         # 应用窗口（WebView2）：pythonnet + pywebview 的资源要整包收进来，
         # 漏了不会崩，但会退回浏览器打开，等于白做。

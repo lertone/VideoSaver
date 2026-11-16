@@ -823,6 +823,12 @@
   .fcard[draggable="true"]:active { cursor: grabbing; }
   .fcard.sel { border-color: var(--accent); background: #1e2c47;
                box-shadow: inset 0 0 0 1px var(--accent); }
+  /* Ctrl + 左键拖拽的框选：虚线框 + 划过的卡片临时高亮 */
+  #selBox { position: fixed; z-index: 55; pointer-events: none; display: none;
+            border: 1px dashed var(--accent); border-radius: 6px;
+            background: rgba(91,140,255,.10); }
+  #selBox.on { display: block; }
+  .fcard.selhit { box-shadow: inset 0 0 0 2px var(--accent); }
   #dirCard.dropready { border-color: var(--accent); }
   #dirCard.dropzone { outline: 2px dashed var(--accent); outline-offset: -3px;
                       background: rgba(91,140,255,.09); }
@@ -2092,6 +2098,8 @@
           <span id="selCount">已选 0 个</span>
           <div style="flex:1"></div>
           <button class="iconbtn" id="selMoveBtn" style="padding:5px 10px">转移到…</button>
+          <button class="iconbtn" id="selDelBtn" style="padding:5px 10px"
+                  title="把选中的文件移走（可在系统回收站找回，5 秒内能撤回）">全部清理</button>
           <button class="iconbtn" id="selClearBtn" style="padding:5px 10px">取消选择</button>
         </div>
         <div class="scroll" id="files"><div class="empty">还没有保存过文件</div></div>
@@ -2118,6 +2126,7 @@
 </div>
 
 <div class="droptip" id="dropTip" hidden></div>
+<div id="selBox"></div>
 <div id="dragGhost"></div>
 
 <!-- 使用指引 -->
@@ -2582,19 +2591,19 @@
             <option value="tikhub">Tikhub 托管（免服务器，按量付费）</option>
           </select>
         </div>
-        <div class="field">
+        <div class="field" id="dyEpField">
           <label>服务地址</label>
           <input type="text" id="dyEndpoint" placeholder="例如 http://127.0.0.1:8000（填根地址，不要带 /api/...）" />
         </div>
         <div class="field">
-          <label>API Key</label>
+          <label id="dyKeyLabel">API Key</label>
           <input type="text" id="dyKey" placeholder="dtk_xxxxx（DTK 控制台 → API Key → 勾 douyin:read）" />
         </div>
         <div style="display:flex;gap:8px;margin-top:4px">
           <button class="iconbtn" id="dyTest">测一下服务通不通</button>
         </div>
         <div class="statusline" id="dyStatus"></div>
-        <div class="note" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:8px">
+        <div class="note" id="dyNote" style="color:var(--muted);font-size:11.5px;line-height:1.7;margin-top:8px">
           自建 DTK / 网关 / Tikhub 托管都支持。地址填<b>根地址</b>（如 <code>http://IP:8000</code>
           或 <code>https://api.tikhub.io</code>），不要带 <code>/api/...</code>。
           测服务返回 501 / 网页，说明填成了静态服务器或前端端口。
@@ -3118,7 +3127,8 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       },
       douyin: {
         provider: $("dyProvider").value,
-        endpoint: $("dyEndpoint").value.trim(),
+        // Tikhub 是托管服务，地址固定，不把上次自建网关的地址顺手存进去
+        endpoint: $("dyProvider").value === "tikhub" ? "" : $("dyEndpoint").value.trim(),
         api_key: $("dyKey").value.trim(),
         user_agent: $("dyUA").value.trim()
       },
@@ -3143,6 +3153,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       $("dyEndpoint").value = dy.endpoint || "";
       $("dyKey").value = dy.api_key || "";
       $("dyUA").value = dy.user_agent || "";
+      if (typeof syncDyProvider === "function") syncDyProvider();   // 按当前类型决定藏不藏地址
       $("cookieMode").value = c.cookies.mode;
       $("cookieBrowser").value = c.cookies.browser;
       $("playerClient").value = c.youtube.player_client || "";
@@ -3315,7 +3326,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
                 '" loading="lazy" alt="" draggable="false" onerror="this.remove()">'
               : '');
         return '<div class="fcard" draggable="true" data-name="' + esc(f.name) +
-          '" title="点击预览；按住拖动可多选；Ctrl+C 复制到资源管理器">' +
+          '" title="点击预览；Ctrl+拖动框选；Ctrl+C 复制到资源管理器；直接拖动可移动到目标文件夹">' +
           '<div class="thumb"><span>' + icon + '</span>' + thumbImg + '</div>' +
           '<div class="fname" title="' + esc(f.name) + '">' + esc(f.name) + '</div>' +
           '<div class="fmeta">' + [qualityLabel(f), fmtSize(f.size), date]
@@ -3363,7 +3374,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     else { SEL.clear(); SEL.add(name); }
     paintSel();
   }
+  let boxSel = null, suppressClick = false;
   $("files").addEventListener("click", e => {
+    if (suppressClick) { suppressClick = false; return; }   // 框选松手落下的那一次点击不算
     if (e.target.closest("button")) return;
     const c = e.target.closest(".fcard");
     if (!c) return;
@@ -3375,6 +3388,58 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     } else {
       toggleSel(name, false);
     }
+  });
+
+  /* ---- Ctrl + 左键拖拽 = 框选一批文件 ----
+     以前 Ctrl 拖拽会直接触发 HTML5 拖拽、把文件移走，手一抖就搬错地方。
+     现在改成划框选：拖过的卡片都进选择集，松手后和原有选择合并。 */
+  $("files").addEventListener("mousedown", e => {
+    if (e.button !== 0 || !(e.ctrlKey || e.metaKey)) return;
+    if (e.target.closest("button")) return;
+    boxSel = { x0: e.clientX, y0: e.clientY, active: false, base: new Set(SEL) };
+    const card = e.target.closest(".fcard");
+    if (card) card.setAttribute("draggable", "false");   // 别让它变成移动文件
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!boxSel) return;
+    const dx = e.clientX - boxSel.x0, dy = e.clientY - boxSel.y0;
+    if (!boxSel.active && Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    boxSel.active = true;
+    const l = Math.min(e.clientX, boxSel.x0), t = Math.min(e.clientY, boxSel.y0);
+    const w = Math.abs(dx), h = Math.abs(dy);
+    const box = $("selBox");
+    if (box) {
+      box.classList.add("on");
+      box.style.left = l + "px";
+      box.style.top = t + "px";
+      box.style.width = w + "px";
+      box.style.height = h + "px";
+    }
+    document.querySelectorAll("#files .fcard").forEach(card => {
+      const c = card.getBoundingClientRect();
+      const hit = !(c.right < l || c.left > l + w || c.bottom < t || c.top > t + h);
+      card.classList.toggle("selhit", hit);
+    });
+    e.preventDefault();
+  });
+  document.addEventListener("mouseup", () => {
+    if (!boxSel) return;
+    const wasActive = boxSel.active, base = boxSel.base;
+    const hits = Array.from(document.querySelectorAll("#files .fcard.selhit"))
+      .map(c => c.dataset.name);
+    document.querySelectorAll('.fcard[draggable="false"]')
+      .forEach(c => c.setAttribute("draggable", "true"));
+    document.querySelectorAll(".fcard.selhit").forEach(c => c.classList.remove("selhit"));
+    const box = $("selBox");
+    if (box) box.classList.remove("on");
+    boxSel = null;
+    if (!wasActive) return;      // 只是 Ctrl 点了一下，交给 click 去切换单选
+    base.forEach(n => SEL.add(n));
+    hits.forEach(n => SEL.add(n));
+    paintSel();
+    suppressClick = true;        // 松手可能正好压在卡片上，别让 click 又把它取消掉
+    setTimeout(() => { suppressClick = false; }, 0);
   });
   function placeTip(x, y) {
     const tip = $("dropTip");
@@ -3546,6 +3611,12 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     } catch (err) { say("转移失败：" + err, "bad"); }
   };
   $("selClearBtn").onclick = () => { SEL.clear(); paintSel(); };
+  // 把选中的一次性清走：走批量删除接口，整批共用一个撤销 token，撤回时一起回来
+  $("selDelBtn").onclick = async () => {
+    const names = Array.from(SEL);
+    if (!names.length) return;
+    if (await removeFiles(names)) { SEL.clear(); paintSel(); }
+  };
 
   /* ---- 进度记录折叠：收起后只留标题行与进度条 ---- */
   const LOG_FOLD_KEY = "ves_log_fold";
@@ -3855,7 +3926,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     const isSample = name.indexOf("去水印样片") >= 0;
 
     if (kind === "image") {
-      wmsg(w, "滚轮缩放 · 中键拖动平移 · 双击还原 · 右下角可改窗口大小", "");
+      wmsg(w, "滚轮缩放 · 按住拖动平移 · 双击铺满 · 右下角可改窗口大小", "");
       renderTabs();
       layoutVideo(w);
       return;
@@ -3927,7 +3998,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     rec._zoom = next;
     applyXf(rec);
     if (rec.msg) rec.msg.textContent = "缩放 " + Math.round(next * 100) +
-      "%（中键拖动可平移，双击还原）";
+      "%（按住可平移，双击铺满）";
   }, { passive: false });
 
   // 按住中键（或放大后按住左键）拖动画布
@@ -3940,6 +4011,11 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     if (!isImg && rec.kind !== "video") return;
     const target = isImg ? win.querySelector(".pimg") : win.querySelector(".pframe");
     if (!target) return;
+    // 只有按在画布本身上才平移。之前没这层判断，图片放大后按住标题栏拖窗口，
+    // 图片也会跟着鼠标一起跑，看起来就是「窗口动了图片不同步、越拖越偏」。
+    const stage = win.querySelector(".pstage");
+    if (!stage || !stage.contains(e.target)) return;
+    if (e.target.closest("button, .presize, .pwmpanel, .penhpanel")) return;
     if (e.button === 1 || (e.button === 0 && (rec._zoom || 1) > 1.01)) {
       e.preventDefault();
       rec._pan = { x: rec._tx || 0, y: rec._ty || 0, sx: e.clientX, sy: e.clientY };
@@ -3948,8 +4024,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   });
   document.addEventListener("mousemove", e => {
     if (!e.buttons) return;
-    const win = e.target.closest && e.target.closest(".pwin");
-    const rec = [...WINS.values()].find(x => x._pan && x.el === (win || null));
+    // 直接找正在平移的那个记录，不看 e.target：拖着拖着鼠标划出窗口外时
+    // target 会变成 body，之前那样取就会断掉，图片卡在半路。
+    const rec = [...WINS.values()].find(x => x._pan);
     if (!rec) return;
     rec._tx = rec._pan.x + (e.clientX - rec._pan.sx);
     rec._ty = rec._pan.y + (e.clientY - rec._pan.sy);
@@ -3961,7 +4038,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
         delete rec._pan;
         rec.el.style.cursor = "";
         if (rec.msg) rec.msg.textContent =
-          "缩放 " + Math.round((rec._zoom || 1) * 100) + "%（中键拖动可平移，双击还原）";
+          "缩放 " + Math.round((rec._zoom || 1) * 100) + "%（按住可平移，双击铺满）";
       }
     });
   });
@@ -3984,8 +4061,24 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   document.addEventListener("dblclick", e => {
     const win = e.target.closest && e.target.closest(".pwin");
     if (!win) return;
+    if (e.target.closest(".phead")) return;   // 标题栏双击走上面那条，不在这里重复处理
     const rec = [...WINS.values()].find(x => x.el === win);
-    if (!rec || !rec._zoom) return;
+    if (!rec) return;
+    const stage = win.querySelector(".pstage");
+    const onCanvas = stage && stage.contains(e.target) &&
+                     !e.target.closest("button, .presize, .pwmpanel, .penhpanel");
+    // 双击图片：一键铺满整个窗口，再双击退回原尺寸。顺手把缩放归位，
+    // 否则铺满后还停在上次放大的局部，看起来像没生效。
+    if (rec.kind === "image" && onCanvas) {
+      rec._zoom = 1;
+      rec._tx = 0;
+      rec._ty = 0;
+      applyXf(rec);
+      toggleMaxWin(rec);
+      return;
+    }
+    // 其余情况保留原来的「双击还原到 100%」
+    if (!rec._zoom) return;
     rec._zoom = 1;
     rec._tx = 0;
     rec._ty = 0;
@@ -4383,10 +4476,12 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     bar.classList.remove("show");
     setTimeout(() => { if (!bar.classList.contains("show")) bar.hidden = true; }, 320);
   }
-  function showUndo(name, token, secs) {
+  function showUndo(name, token, secs, count) {
     const bar = $("undoBar"), fill = bar.querySelector(".ubar b");
     UNDO.token = token;
-    $("undoText").textContent = "已删除「" + name + "」";
+    $("undoText").textContent = (count && count > 1)
+      ? "已删除 " + count + " 个文件"
+      : "已删除「" + name + "」";
     bar.hidden = false;
     fill.style.transition = "none";
     fill.style.transform = "scaleX(1)";
@@ -4409,22 +4504,35 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     if (!t) return;
     UNDO.token = ""; clearTimeout(UNDO.timer); hideUndo();
     const j = await api("/api/files/restore", { token: t });
-    say(j.ok ? "已撤回「" + (j.name || "") + "」" : ("撤回失败：" + (j.error || "未知")),
+    const what = (j.count && j.count > 1) ? (j.count + " 个文件") : ("「" + (j.name || "") + "」");
+    say(j.ok ? "已撤回" + what : ("撤回失败：" + (j.error || "未知")),
       j.ok ? "ok" : "bad");
     loadFiles();
   }
   if ($("undoBtn")) $("undoBtn").onclick = restoreUndo;
 
+  async function removeFiles(names) {
+    if (!names || !names.length) return false;
+    if (UNDO.token) await purgeUndo();   // 连续删：上一个立刻定格，只保留最新一条可撤销
+    let j;
+    try {
+      j = await api("/api/files/delete", { names: names });
+    } catch (e) {
+      say("删除失败：" + e, "bad");
+      return false;
+    }
+    if (!j.ok) { say("删除失败：" + (j.error || "未知"), "bad"); return false; }
+    const n = j.count || (j.names || names).length;
+    showUndo(j.name || names[0], j.token, 5, n);
+    loadFiles();
+    return true;
+  }
   async function removeFile(name, btn) {
     if (btn) {
       btn.classList.add("wobble");
       setTimeout(() => btn.classList.remove("wobble"), 660);
     }
-    if (UNDO.token) await purgeUndo();   // 连续删：上一个立刻定格，只保留最新一条可撤销
-    const j = await api("/api/files/delete", { name });
-    if (!j.ok) { say("删除失败：" + (j.error || "未知"), "bad"); return; }
-    showUndo(j.name || name, j.token, 5);
-    loadFiles();
+    await removeFiles([name]);
   }
   async function revealFile(name) {
     say(name ? "正在定位文件…" : "正在打开保存文件夹…", "busy");
@@ -4569,21 +4677,38 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   }
   $("ytdlpUpdateBtn").onclick = updateYtdlp;
 
-  $("dyProvider").onchange = () => {
+  /* 服务类型切换：Tikhub 是官方托管服务，地址固定，直接把「服务地址」整行藏掉，
+     只留 Token 一个框；切回自建再放出来。以前只换 placeholder，
+     从 DTK 切过来时还留着自建地址，测试和解析全打到了旧网关上。 */
+  function syncDyProvider() {
     const t = $("dyProvider").value === "tikhub";
-    $("dyEndpoint").placeholder = t ? "https://api.tikhub.io"
-      : "例如 http://127.0.0.1:8000（根地址，不要带 /api/...）";
-    $("dyKey").placeholder = t ? "Tikhub API Token"
-      : "dtk_xxxxx（控制台 → API Keys）";
-  };
+    const epField = $("dyEpField");
+    if (epField) epField.style.display = t ? "none" : "";
+    const kl = $("dyKeyLabel");
+    if (kl) kl.textContent = t ? "Tikhub Token" : "API Key";
+    $("dyEndpoint").placeholder = "例如 http://127.0.0.1:8000（根地址，不要带 /api/...）";
+    $("dyKey").placeholder = t ? "粘贴 Tikhub 的 API Token（不是 dtk_ 开头）"
+                              : "dtk_xxxxx（DTK 控制台 → API Key → 勾 douyin:read）";
+    const btn = $("dyTest");
+    if (btn) btn.textContent = t ? "测一下 Token 能不能用" : "测一下服务通不通";
+    const note = $("dyNote");
+    if (note) note.innerHTML = t
+      ? 'Tikhub 是官方托管服务，<b>地址固定为 <code>api.tikhub.io</code></b>，不用填服务器。' +
+        '去 <a href="https://www.tikhub.io" target="_blank" rel="noopener">tikhub.io</a> 注册，' +
+        '用户中心 → API Keys 创建 Token，粘到上面即可。按量计费，余额或权限不足会返回 401/402/403。'
+      : '自建 DTK / 网关 / Tikhub 托管都支持。地址填<b>根地址</b>（如 <code>http://IP:8000</code>' +
+        ' 或 <code>https://api.tikhub.io</code>），不要带 <code>/api/...</code>。' +
+        '测服务返回 501 / 网页，说明填成了静态服务器或前端端口。';
+  }
+  $("dyProvider").onchange = syncDyProvider;
   $("dyTest").onclick = async () => {
     setLine("dyStatus", "正在连…", "");
     await saveSettings(true);
     const j = await api("/api/douyin/test", {});
     if (j.ok) {
       if (j.kind === "tikhub") {
-        setLine("dyStatus", "✓ " + (j.hint || "Tikhub 模式已保存") +
-          (j.has_key ? "" : "；但还没填 Token"), j.has_key ? "ok" : "");
+        setLine("dyStatus", "✓ " + (j.hint || "Tikhub Token 有效") +
+          "（地址固定 api.tikhub.io，不用填服务器）", "ok");
       } else {
         const kind = j.kind === "native" ? "原生 DTK" : (j.kind === "gateway" ? "网关" : "服务");
         setLine("dyStatus", "✓ " + kind + "在线" + (j.hint ? "；" + j.hint : "") +
@@ -4611,7 +4736,13 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   $("goBtn").onclick = startSave;
   /* ---------- 批量任务 ---------- */
   let JOBS = [], stopFlag = false, curFilter = "all", LAST_DIR = "";
-  let AUDIO_FILES = [], iIdx = -1, iMode = 0, seeking = false;
+  let AUDIO_FILES = [], iIdx = -1, seeking = false;
+  // 播放模式记住上次的选择（0 单曲 / 1 顺序 / 2 随机）。以前固定从 0 起，
+  // 每次开会都回到单曲循环，听专辑时很别扭。
+  let iMode = (() => {
+    const v = parseInt(localStorage.getItem("ves_imode") || "", 10);
+    return (v === 0 || v === 1 || v === 2) ? v : 1;   // 没存过就用「顺序播放」
+  })();
   let actx = null, analyser = null, asrc = null, waveRAF = 0;
 
 
@@ -6036,7 +6167,11 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     };
     $("iPrev").onclick = () => gotoIdx(-1);
     $("iNext").onclick = () => gotoIdx(1);
-    $("iMode").onclick = () => { iMode = (iMode + 1) % 3; updateMode(); };
+    $("iMode").onclick = () => {
+      iMode = (iMode + 1) % 3;
+      try { localStorage.setItem("ves_imode", String(iMode)); } catch (e) {}
+      updateMode();
+    };
     $("iClose").onclick = () => {
       el.pause();
       el.removeAttribute("src");

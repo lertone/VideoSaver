@@ -78,10 +78,20 @@ FEEDBACK_RETRY_SECONDS = 120
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.6"
-APP_DATE = "2026-11-13"
+APP_VERSION = "1.5.7"
+APP_DATE = "2026-11-16"
 
 CHANGELOG = [
+    {"v": "1.5.7", "date": "2026-11-16",
+     "items": [("修复", "保存目录设成盘根（比如 F:\\）时，复制、移动、另存都提示找不到文件，已修好。"),
+               ("修复", "图片预览放大后拖动窗口，图片会跟着鼠标跑、越拖越偏，已修好。"),
+               ("新增", "预览窗口里双击图片可以一键铺满，再双击退回。"),
+               ("新增", "选中文件后点「全部清理」一次清完，5 秒内仍能整批撤回。"),
+               ("新增", "音乐播放模式会记住上次的选择，不再每次都回到单曲循环。"),
+               ("优化", "按住 Ctrl 拖动改成框选，不再误把文件搬走；直接拖动还是移动。"),
+               ("优化", "文件区只显示视频、音频、图片和文本，pdf、exe、压缩包不再混进来。"),
+               ("优化", "AI 助手可以看别的盘了：查目录、搜子目录、读文件信息、跨文件夹搬文件都行，默认仍是当前保存文件夹。"),
+               ("修复", "抖音选「Tikhub 托管」时不再让你填服务地址（固定 api.tikhub.io），输入框改叫 Token，测速也不会再打到自建网关上。")]},
     {"v": "1.5.6", "date": "2026-11-15",
      "items": [("优化", "抖音解析更稳：解析服务需要多等一会儿时，程序会自动等它完成，不再偶尔提示拿不到视频。"),
                ("新增", "小红书可以用 Tikhub 托管：不用自己搭服务器，复制分享链接就能下，支持无水印单文件。"),
@@ -2244,7 +2254,7 @@ def douyin_ready(cfg):
     if not (dy.get("api_key") or "").strip():
         return False
     if (dy.get("provider") or "dtk").lower() == "tikhub":
-        return True          # Tikhub 地址可留空，默认 api.tikhub.io
+        return True          # Tikhub 走官方托管地址，只要 Token 填了就算就绪
     return bool((dy.get("endpoint") or "").strip())
 
 
@@ -2391,12 +2401,18 @@ def _douyin_aweme_id(url):
     return m.group(1) if m else ""
 
 
+# Tikhub 是托管服务，地址只有一个。以前这里会沿用用户在「服务地址」里填的值，
+# 于是从 DTK 切到 Tikhub 时，请求还打向自建网关，测试和解析必然对不上。
+# 现在 Tikhub 模式一律用官方地址；国内要走中转的话改这个环境变量即可。
+TIKHUB_BASE = (os.environ.get("VIDEOSAVER_TIKHUB_BASE") or "https://api.tikhub.io").rstrip("/")
+
+
 def _tikhub_douyin(url, endpoint, key):
     """Tikhub 托管抖音接口；免服务器，按量计费。"""
     aweme = _douyin_aweme_id(url)
     if not aweme:
         return None, "无法从分享链接提取抖音作品 ID"
-    base = (endpoint or "https://api.tikhub.io").rstrip("/")
+    base = TIKHUB_BASE
     paths = [
         "/api/v1/douyin/app/v3/fetch_one_video_v3?aweme_id=" + aweme,
         "/api/v1/douyin/app/v3/fetch_one_video?aweme_id=" + aweme,
@@ -2433,7 +2449,7 @@ def _tikhub_douyin(url, endpoint, key):
 
 def _tikhub_xhs(url, endpoint, key):
     """Tikhub 小红书：app_v2 支持直接吃分享链接，返回单文件 MP4。"""
-    base = (endpoint or "https://api.tikhub.io").rstrip("/")
+    base = TIKHUB_BASE
     api = base + "/api/v1/xiaohongshu/app_v2/get_video_note_detail?" + \
           urllib.parse.urlencode({"share_text": url})
     try:
@@ -2487,7 +2503,7 @@ def _dy_check_key(endpoint, key, provider):
     """只验证 Key/Token 是否有效，不解析真实内容。"""
     ep = (endpoint or "").strip().rstrip("/")
     if provider == "tikhub":
-        ep = ep or "https://api.tikhub.io"
+        ep = TIKHUB_BASE          # 托管服务地址固定，不用户填的那个
         try:
             p = _dy_get_json(ep + "/api/v1/tikhub/user/get_user_info",
                              {"Authorization": "Bearer " + key}, timeout=15)
@@ -2528,8 +2544,8 @@ def resolve_douyin(url, cfg):
     endpoint = (dy.get("endpoint") or "").strip().rstrip("/")
     key = (dy.get("api_key") or "").strip()
     provider = (dy.get("provider") or "dtk").lower()
-    if provider == "tikhub" and not endpoint:
-        endpoint = "https://api.tikhub.io"
+    if provider == "tikhub":
+        endpoint = TIKHUB_BASE    # 托管地址固定，忽略设置里残留的自建网关地址
     if not endpoint:
         return None, "没配置解析服务地址（设置 → 抖音解析服务）"
     if not key:
@@ -3569,6 +3585,86 @@ def safe_filename(name):
     return name
 
 
+def trash_files(names):
+    """把一批文件挪进应用内回收站，返回 (token, done, error)。
+
+    整批共用一个 token：前端只弹一条「已删除 N 个文件」，撤回时整批一起回来。
+    """
+    targets = []
+    for it in list(names)[:200]:
+        name = safe_filename(it)
+        path = safe_download_path(name)
+        if path and os.path.isfile(path):
+            targets.append((name, path))
+    if not targets:
+        return None, [], "文件不存在"
+    token = "%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
+    box = os.path.join(TRASH_DIR, token)
+    done = []
+    try:
+        os.makedirs(box, exist_ok=True)
+        for name, path in targets:
+            dst = os.path.join(box, name)
+            if os.path.exists(dst):              # 同名（极少见）别互相覆盖
+                stem, ext = os.path.splitext(name)
+                dst = os.path.join(box, "%s_%d%s" % (stem, len(done), ext))
+            shutil.move(path, dst)
+            done.append({"name": name, "store": os.path.basename(dst), "from": path})
+    except Exception as e:
+        if not done:
+            return None, [], "删除失败：" + str(e)
+    try:
+        with open(os.path.join(box, "_meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"files": done, "ts": time.time()}, f, ensure_ascii=False)
+    except Exception:
+        pass
+    return token, done, None
+
+
+def restore_trash(token):
+    """把某个 token 里的整批文件还原回保存目录，返回 (restored, error)。"""
+    if not re.fullmatch(r"\d+_[0-9a-f]{6}", str(token or "")):
+        return [], "撤销标识无效"
+    box = os.path.join(TRASH_DIR, token)
+    meta_path = os.path.join(box, "_meta.json")
+    if not os.path.isfile(meta_path):
+        return [], "已经清理掉了，撤不回来"
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+    except Exception:
+        meta = {}
+    # 兼容旧版本留下的单文件 meta（只有 name）
+    entries = meta.get("files")
+    if not isinstance(entries, list):
+        entries = [{"name": meta.get("name") or "", "store": meta.get("name") or ""}]
+    dest_dir = _disk_download_dir()
+    restored = []
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        for ent in entries:
+            name = safe_filename(ent.get("name") or "")
+            store = safe_filename(ent.get("store") or name)
+            if not name or not store:
+                continue
+            src = os.path.join(box, store)
+            if not os.path.isfile(src):
+                continue
+            dest = os.path.join(dest_dir, name)
+            if os.path.exists(dest):
+                stem, ext = os.path.splitext(name)
+                dest = os.path.join(dest_dir,
+                                    "%s_恢复%d%s" % (stem, int(time.time()) % 10000, ext))
+            shutil.move(src, dest)
+            restored.append(os.path.basename(dest))
+        shutil.rmtree(box, ignore_errors=True)
+    except Exception as e:
+        return restored, "恢复失败：" + str(e)
+    if not restored:
+        return [], "文件已不在暂存区"
+    return restored, None
+
+
 def send_to_recycle_bin(paths):
     """把文件送进系统回收站（Windows Shell API / macOS ~/.Trash / Linux gio）。"""
     if not IS_WIN:
@@ -3791,7 +3887,12 @@ def safe_download_path(name):
         return None
     root = os.path.realpath(get_config()["download_dir"])
     path = os.path.realpath(os.path.join(root, name))
-    if not path.startswith(root + os.sep):
+    # 边界校验不能直接拼 root + os.sep：下载目录设成盘根时（如 F:\），
+    # realpath 结果自带尾部反斜杠，再拼一次就成了 "F:\\"，
+    # 于是 F:\a.mp4 不满足 startswith，所有文件都被当成越界。
+    root_key = os.path.normcase(root).rstrip("\\/") or os.path.normcase(root)
+    path_key = os.path.normcase(path)
+    if not (path_key == root_key or path_key.startswith(root_key + os.sep)):
         return None
     return path
 
@@ -4183,9 +4284,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         # 合并成功后会自己删；中途失败留下的不该被当成成品视频。
                         or re.search(r"\.f\d+\.(mp4|webm|m4a|mp3|aac|opus|mkv|mov|flv)$", low)):
                     continue
+                kind = media_kind(fn)
+                # 只展示视频 / 音频 / 图片 / 文本这四类。pdf、exe、压缩包、工程文件
+                # 之类不进列表：混在媒体里既没法预览也占屏幕，还容易被误当成下载结果。
+                if kind == "other":
+                    continue
                 st = os.stat(p)
                 files.append({"name": fn, "size": st.st_size, "mtime": int(st.st_mtime),
-                              "path": p, "kind": media_kind(fn)})
+                              "path": p, "kind": kind})
         except Exception as e:
             return self._send_json({"error": str(e)}, 500)
         files.sort(key=lambda x: x["mtime"], reverse=True)
@@ -4431,61 +4537,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def handle_file_delete(self):
         """先移进应用内回收站（可撤销），撤销窗口过后再送系统回收站。
 
-        用户要的是「点了就删、不弹框、但能撤回」，所以这里不做确认，
-        只把文件挪到 DATA_DIR/trash/<token>/，由前端倒计时决定保留多久。
+        用户要的是「点了就删、不弹框、但能撤回」，所以这里不做确认。
+        支持一次删一批（选中后点「全部清理」），整批共用一个 token。
         """
         data = self._read_json()
-        name = safe_filename(data.get("name", ""))
-        path = safe_download_path(name)
-        if not path or not os.path.isfile(path):
-            return self._send_json({"ok": False, "error": "文件不存在"}, 404)
-        token = "%d_%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
-        box = os.path.join(TRASH_DIR, token)
-        try:
-            os.makedirs(box, exist_ok=True)
-            dst = os.path.join(box, name)
-            shutil.move(path, dst)
-        except Exception as e:
-            return self._send_json({"ok": False, "error": "删除失败：" + str(e)}, 500)
-        try:
-            with open(os.path.join(box, "_meta.json"), "w", encoding="utf-8") as f:
-                json.dump({"name": name, "from": path, "ts": time.time()}, f, ensure_ascii=False)
-        except Exception:
-            pass
-        return self._send_json({"ok": True, "token": token, "name": name,
+        raw = data.get("names")
+        items = ([str(x) for x in raw] if isinstance(raw, (list, tuple))
+                 else [str(data.get("name") or "")])
+        token, done, err = trash_files(items)
+        if err:
+            return self._send_json({"ok": False, "error": err}, 404)
+        return self._send_json({"ok": True, "token": token, "count": len(done),
+                                "name": done[0]["name"] if len(done) == 1 else "",
+                                "names": [d["name"] for d in done],
                                 "message": "已删除，可撤销"})
 
     def handle_file_restore(self):
-        """撤销删除：把文件从暂存区挪回原处。"""
+        """撤销删除：把整批文件从暂存区挪回原处。"""
         data = self._read_json()
-        token = str(data.get("token") or "")
-        if not re.fullmatch(r"\d+_[0-9a-f]{6}", token):
-            return self._send_json({"ok": False, "error": "撤销标识无效"}, 400)
-        box = os.path.join(TRASH_DIR, token)
-        meta_path = os.path.join(box, "_meta.json")
-        if not os.path.isfile(meta_path):
-            return self._send_json({"ok": False, "error": "已经清理掉了，撤不回来"}, 404)
-        try:
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-        except Exception:
-            meta = {}
-        name = safe_filename(meta.get("name") or "")
-        src = os.path.join(box, name)
-        if not os.path.isfile(src):
-            return self._send_json({"ok": False, "error": "文件已不在暂存区"}, 404)
-        dest_dir = _disk_download_dir()
-        try:
-            os.makedirs(dest_dir, exist_ok=True)
-            dest = os.path.join(dest_dir, name)
-            if os.path.exists(dest):
-                stem, ext = os.path.splitext(name)
-                dest = os.path.join(dest_dir, "%s_恢复%d%s" % (stem, int(time.time()) % 10000, ext))
-            shutil.move(src, dest)
-            shutil.rmtree(box, ignore_errors=True)
-        except Exception as e:
-            return self._send_json({"ok": False, "error": "恢复失败：" + str(e)}, 500)
-        return self._send_json({"ok": True, "name": os.path.basename(dest)})
+        restored, err = restore_trash(str(data.get("token") or ""))
+        if err:
+            return self._send_json({"ok": False, "error": err}, 404)
+        return self._send_json({"ok": True, "count": len(restored),
+                                "name": restored[0], "names": restored})
 
     def handle_file_purge(self):
         """撤销窗口结束后真正清理：送进 Windows 回收站，仍可在资源管理器还原。"""
@@ -5382,7 +5456,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not has_key:
                 return self._send_json({"ok": False, "kind": "tikhub",
                                         "error": "还没填 Tikhub Token"})
-            key_ok, key_msg = _dy_check_key(endpoint, key, "tikhub")
+            key_ok, key_msg = _dy_check_key(TIKHUB_BASE, key, "tikhub")
             return self._send_json({"ok": key_ok, "kind": "tikhub", "has_key": True,
                                     "key_ok": key_ok,
                                     "error": "" if key_ok else key_msg,
@@ -5705,7 +5779,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 elif is_xiaohongshu(origin_url) and dy_provider == "tikhub" and douyin_ready(cfg):
                     self._write("[小红书] 正在通过 Tikhub 取直链…\n")
                     info, why = _tikhub_xhs(origin_url,
-                                            (dy_cfg.get("endpoint") or "https://api.tikhub.io"),
+                                            TIKHUB_BASE,
                                             (dy_cfg.get("api_key") or "").strip())
                     if info:
                         dtk = info
@@ -6156,6 +6230,14 @@ AI_SYSTEM_PROMPT = """你是 VideoSaver 的专属智能助手（VS-Agent），�
 - 要多个时用 collect_and_download：它会先验证、并跳过标题或时长不符的结果；汇报时说明跳过了什么。
 - 平台受限内容：先用 cookie_status 看有没有登录信息；抖音/快手只有 Cookie 不够，还需要解析服务。
 
+【文件范围】
+- 默认以用户当前选择的保存文件夹为准，不必每次问路径。
+- 但用户要你看别的盘 / 别的文件夹时，直接用带 path 的工具，不要让他先去改保存目录：
+  list_files(path) 看目录、search_files(path, deep=true) 连子目录搜、media_info(path) 读某个文件。
+- 跨文件夹搬文件用 move_files：names 里写绝对路径，或给 src_dir。移动前列出「从哪到哪」确认一次。
+- 文件区只展示视频 / 音频 / 图片 / 文本；pdf、exe、压缩包这类用户看不见，但你仍然可以用工具查到和处理。
+- 找文件找不到就问用户大概在哪个盘或文件夹，不要只说「没有」就结束。
+
 【媒体与剪辑工具】
 - 判断「是不是正片 / 有没有下错」：先 media_info（本地文件）或 probe_url（任意链接）看时长和标题，再决定。
 - 要剪片段、抽音频、压体积：用 clip_video / extract_audio / transcode_video，产物都落在保存文件夹。
@@ -6229,23 +6311,45 @@ def list_sites(query=""):
     return {"total": total, "count": len(items), "items": items[:200]}
 
 
+def _ai_dir_arg(a):
+    """AI 要看/要搜的目录：给了 path 就用它，否则用当前保存文件夹。
+
+    浏览和读取放宽到任意目录（用户要求「翻阅不局限本文件夹」），
+    但默认目标仍是用户已选的那个文件夹，AI 不需要每次都问路径。
+    """
+    raw = str(a.get("path") or a.get("dir") or "").strip()
+    if not raw:
+        return _disk_download_dir(), None
+    d = os.path.realpath(os.path.expanduser(raw))
+    if not os.path.isdir(d):
+        return None, {"ok": False, "error": "目录不存在：" + raw}
+    return d, None
+
+
 def _t_list_files(a):
-    d = get_config()["download_dir"]
+    d, err = _ai_dir_arg(a)
+    if err:
+        return err
     rows = []
     total = 0.0
-    for fn in sorted(os.listdir(d)):
+    try:
+        names = sorted(os.listdir(d))
+    except OSError as e:
+        return {"ok": False, "error": "这个目录读不了：%s" % str(e)[:80]}
+    for fn in names:
         p = os.path.join(d, fn)
-        if os.path.isfile(p):
-            try:
-                mb = os.path.getsize(p) / 1048576.0
-            except OSError:
-                continue
-            total += mb
-            rows.append({"name": fn, "size_mb": round(mb, 2), "kind": media_kind(fn)})
+        if not os.path.isfile(p):
+            continue
+        try:
+            mb = os.path.getsize(p) / 1048576.0
+        except OSError:
+            continue
+        total += mb
+        rows.append({"name": fn, "size_mb": round(mb, 2), "kind": media_kind(fn)})
     kind = str(a.get("kind") or "").strip()
     shown = [r for r in rows if r["kind"] == kind] if kind else rows
     try:
-        limit = max(5, min(100, int(a.get("limit") or 40)))
+        limit = max(5, min(200, int(a.get("limit") or 40)))
     except Exception:
         limit = 40
     return {"dir": d, "path": d, "file_count": len(rows),
@@ -6305,10 +6409,22 @@ AI_FRAMES_DIR = os.path.join(DATA_DIR, "ai_frames")
 
 
 def _media_file(a):
-    name = str(a.get("name") or a.get("file") or "").strip()
-    path = safe_download_path(name)
+    """定位要处理的媒体文件：给绝对路径就用绝对路径，否则在当前保存文件夹里找。
+
+    抽取帧、看画面、剪辑、转码、读信息都走这里，所以这些操作现在也能处理
+    用户在别的盘 / 别的文件夹里的片子，不再被保存目录框住。
+    """
+    raw = str(a.get("path") or a.get("file") or a.get("name") or "").strip()
+    if not raw:
+        return None, {"ok": False, "error": "缺文件名或路径"}
+    if os.path.isabs(raw):
+        path = os.path.realpath(os.path.expanduser(raw))
+        if not os.path.isfile(path):
+            return None, {"ok": False, "error": "路径不存在：" + raw}
+        return path, None
+    path = safe_download_path(raw)
     if not path or not os.path.isfile(path):
-        return None, {"ok": False, "error": "保存文件夹里没有这个文件：" + name}
+        return None, {"ok": False, "error": "保存文件夹里没有这个文件：" + raw}
     return path, None
 
 
@@ -6623,26 +6739,53 @@ def _t_rename(a):
     return {"ok": True, "from": old, "to": new}
 
 
+def _ai_src_path(raw, src_dir=""):
+    """AI 指的源文件：绝对路径就直接用（能跨文件夹搬），否则在当前保存文件夹里找。"""
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    if os.path.isabs(s):
+        return os.path.realpath(os.path.expanduser(s))
+    base = (os.path.realpath(os.path.expanduser(src_dir))
+            if src_dir and os.path.isdir(os.path.expanduser(src_dir))
+            else get_config()["download_dir"])
+    name = safe_filename(s)
+    if not name:
+        return None
+    return os.path.join(base, name)
+
+
 def _t_move(a):
     if not a.get("confirm"):
         return {"ok": False, "need_confirm": True,
                 "hint": "这是移动操作：先向用户确认，再带 confirm=true 重新调用。"}
     raw = a.get("names")
-    names = [safe_filename(str(x)) for x in raw] if isinstance(raw, (list, tuple)) else             ([safe_filename(str(raw))] if raw else [])
+    items = ([str(x) for x in raw] if isinstance(raw, (list, tuple))
+             else ([str(raw)] if raw else []))
     dest = str(a.get("dest") or "").strip()
-    if not names or not dest or not os.path.isdir(dest):
+    src_dir = str(a.get("src_dir") or "").strip()
+    if not items or not dest or not os.path.isdir(dest):
         return {"ok": False, "error": "参数不全或目标不存在"}
+    dest = os.path.realpath(dest)
     moved, failed = [], []
-    for n in names[:60]:
-        src = safe_download_path(n)
+    for it in items[:60]:
+        src = _ai_src_path(it, src_dir)
+        base = os.path.basename(src) if src else it
         try:
             if not src or not os.path.isfile(src):
-                failed.append(n)
+                failed.append(base)
                 continue
-            shutil.move(src, os.path.join(dest, os.path.basename(src)))
-            moved.append(n)
-        except Exception:
-            failed.append(n)
+            target = os.path.join(dest, os.path.basename(src))
+            if os.path.realpath(src) == os.path.realpath(target):
+                moved.append(base)                # 本来就在那儿
+                continue
+            if os.path.exists(target):            # 不覆盖同名文件，加个时间戳后缀
+                stem, ext = os.path.splitext(os.path.basename(src))
+                target = os.path.join(dest, "%s_%d%s" % (stem, int(time.time()), ext))
+            shutil.move(src, target)
+            moved.append(base)
+        except Exception as e:
+            failed.append("%s：%s" % (base, str(e)[:60]))
     return {"ok": bool(moved), "moved": len(moved), "failed": failed, "dest": dest}
 
 
@@ -6660,16 +6803,57 @@ def _t_delete(a):
 
 
 def _t_search_files(a):
+    """按名字搜文件。默认只搜当前保存文件夹；给 path 搜别的目录，deep=true 连子目录一起翻。"""
     q = str(a.get("query") or "").strip().lower()
-    d = _disk_download_dir()
+    d, err = _ai_dir_arg(a)
+    if err:
+        return err
+    deep = bool(a.get("deep"))
     hits = []
-    for fn in sorted(os.listdir(d)):
-        if q and q not in fn.lower():
-            continue
-        p = os.path.join(d, fn)
-        if os.path.isfile(p):
-            hits.append({"name": fn, "size_mb": round(os.path.getsize(p) / 1048576.0, 2)})
-    return {"count": len(hits), "files": hits[:30]}
+    MAX_HITS = 200
+    if deep:
+        base = d.rstrip("\\/").count(os.sep)
+        skip = {"node_modules", "__pycache__", ".git", "$recycle.bin",
+                "windows", "system32", "appdata", "program files",
+                "program files (x86)", "programdata"}
+        for root, dirs, fns in os.walk(d, onerror=lambda e: None):
+            dirs[:] = [x for x in dirs
+                       if not x.startswith((".", "$")) and x.lower() not in skip]
+            if root.rstrip("\\/").count(os.sep) - base >= 4:
+                dirs[:] = []                      # 最多往下四层，别把整块盘翻穿
+            for fn in fns:
+                if q and q not in fn.lower():
+                    continue
+                p = os.path.join(root, fn)
+                try:
+                    size = os.path.getsize(p)
+                except OSError:
+                    continue
+                hits.append({"name": fn, "path": p, "dir": root,
+                             "kind": media_kind(fn),
+                             "size_mb": round(size / 1048576.0, 2)})
+                if len(hits) >= MAX_HITS:
+                    break
+            if len(hits) >= MAX_HITS:
+                break
+    else:
+        try:
+            names = sorted(os.listdir(d))
+        except OSError as e:
+            return {"ok": False, "error": "这个目录读不了：%s" % str(e)[:80]}
+        for fn in names:
+            if q and q not in fn.lower():
+                continue
+            p = os.path.join(d, fn)
+            if not os.path.isfile(p):
+                continue
+            try:
+                size = os.path.getsize(p)
+            except OSError:
+                continue
+            hits.append({"name": fn, "path": p, "dir": d, "kind": media_kind(fn),
+                         "size_mb": round(size / 1048576.0, 2)})
+    return {"count": len(hits), "dir": d, "deep": deep, "files": hits[:40]}
 
 
 def _t_settings(a):
@@ -7672,12 +7856,18 @@ def _p(**kw):
 
 AI_TOOL_SCHEMA = [
     {"type": "function", "function": {
-        "name": "list_files", "description": "列出当前保存文件夹里的文件",
+        "name": "list_files",
+        "description": "列出文件夹里的文件。默认列当前保存文件夹；给 path 可以看别的目录（任意路径都行）。",
         "parameters": _p(kind={"type": "string", "description": "video/audio/image/text，可空"},
+                         path={"type": "string", "description": "要看哪个文件夹，留空=当前保存文件夹"},
                          limit={"type": "integer", "description": "最多返回几条"})}},
     {"type": "function", "function": {
-        "name": "search_files", "description": "按文件名关键词搜索文件",
-        "parameters": _p(query={"type": "string", "description": "关键词"})}},
+        "name": "search_files",
+        "description": "按文件名关键词搜索。默认搜当前保存文件夹；给 path 搜别的目录，"
+                       "deep=true 连子目录一起翻（最多往下四层）。",
+        "parameters": _p(query={"type": "string", "description": "关键词"},
+                         path={"type": "string", "description": "从哪个目录开始搜，留空=当前保存文件夹"},
+                         deep={"type": "boolean", "description": "是否递归子目录"})}},
     {"type": "function", "function": {
         "name": "get_settings", "description": "读取当前设置（保存目录、代理、登录信息状态、版本）",
         "parameters": _p()}},
@@ -7750,8 +7940,10 @@ AI_TOOL_SCHEMA = [
         "parameters": _p(confirm={"type": "boolean"})}},
     {"type": "function", "function": {
         "name": "media_info",
-        "description": "读本地媒体文件的时长/分辨率/编码/码率。判断是不是正片、能不能剪之前先用它。",
-        "parameters": _p(name={"type": "string", "description": "保存文件夹里的文件名"})}},
+        "description": "读本地媒体文件的时长/分辨率/编码/码率。判断是不是正片、能不能剪之前先用它。"
+                       "跨文件夹的文件直接给 path（完整路径）。",
+        "parameters": _p(path={"type": "string", "description": "完整路径，跨文件夹时用它"},
+                         name={"type": "string", "description": "保存文件夹里的文件名"})}},
     {"type": "function", "function": {
         "name": "extract_frames",
         "description": "从本地视频里均匀抽几帧存成图片，返回路径；用于封面、比对或交给多模态模型看。",
@@ -7782,9 +7974,13 @@ AI_TOOL_SCHEMA = [
         "name": "rename_file", "description": "给保存文件夹里的文件改名",
         "parameters": _p(name={"type": "string"}, new_name={"type": "string"})}},
     {"type": "function", "function": {
-        "name": "move_files", "description": "把文件移动到指定文件夹（必须先向用户确认，confirm=true）",
+        "name": "move_files",
+        "description": "把文件移动到指定文件夹。源可以跨目录：names 里直接写绝对路径，"
+                       "或给 src_dir。必须先向用户确认，confirm=true 才执行。",
         "parameters": _p(names={"type": "array", "items": {"type": "string"}},
-                         dest={"type": "string"}, confirm={"type": "boolean"})}},
+                         dest={"type": "string", "description": "目标文件夹绝对路径"},
+                         src_dir={"type": "string", "description": "源文件夹，留空=当前保存文件夹"},
+                         confirm={"type": "boolean"})}},
     {"type": "function", "function": {
         "name": "delete_files", "description": "把文件送进系统回收站（必须先向用户确认，confirm=true）",
         "parameters": _p(names={"type": "array", "items": {"type": "string"}},

@@ -121,8 +121,11 @@ def build(onefile=False):
         # %LOCALAPPDATA%\VideoSaver\logs\app.log，起不来会弹对话框。
         "--windowed",
         "--add-data", "index.html" + SEP + ".",
-        # 反馈中继配置（公开仓库里为空，正式发版由构建注入）
-        "--add-data", "feedback_config.json" + SEP + ".",
+        # 反馈中继配置（公开仓库里为空，正式发版由构建注入）。
+        # 目标写成 "." 时 PyInstaller 6 会建出 `feedback_config.json/` 同名目录，
+        # 文件被塞进 `_internal/feedback_config.json/feedback_config.json`；
+        # 这里显式给文件名，_internal 下就是干净的平铺结构。
+        "--add-data", "feedback_config.json" + SEP + "feedback_config.json",
         "--hidden-import", "wm_detect",
         # 应用窗口（WebView2）：pythonnet + pywebview 的资源要整包收进来，
         # 漏了不会崩，但会退回浏览器打开，等于白做。

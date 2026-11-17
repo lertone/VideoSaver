@@ -5220,6 +5220,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
 
   /* ---- 后台服务心跳：进程如果挂了，页面会变成"僵尸"（点哪都没反应） ---- */
   let offlineFails = 0, wasOffline = false;
+  const BOOT_AT = Date.now();          // 页面加载时刻，用来给启动留出宽限
   async function heartbeat() {
     let tid = 0;
     try {
@@ -5236,8 +5237,12 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     } catch (e) {
       clearTimeout(tid);
       offlineFails++;
-      // 连续 3 次（约 15 秒）才提示，一次卡顿不该吓人
-      if (offlineFails >= 3) { wasOffline = true; $("offlineBar").hidden = false; }
+      // 刚启动那半分钟不算数：后端要探代理、绑端口，页面往往已经先渲染完了。
+      // 以前一启动就弹「后台服务未运行」，其实服务只是还没就绪。
+      if (offlineFails >= 3 && Date.now() - BOOT_AT > 30000) {
+        wasOffline = true;
+        $("offlineBar").hidden = false;
+      }
     }
   }
   $("offlineRetry").onclick = async () => {

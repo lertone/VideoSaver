@@ -78,10 +78,17 @@ FEEDBACK_RETRY_SECONDS = 120
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.8"
+APP_VERSION = "1.5.9"
 APP_DATE = "2026-11-17"
 
 CHANGELOG = [
+    {"v": "1.5.9", "date": "2026-11-17",
+     "items": [("修复", "AI 助手一调用工具就报错（name '_AI_FILE_TOOLS' is not defined），1.5.8 里助手基本不可用，已修。"),
+               ("修复", "刚启动那十几秒会误报「后台服务未运行」，其实服务只是还在探测代理；现在启动后 30 秒内不提示。"),
+               ("修复", "嗅探窗口打开是空白页、也不会到最前：根因是上一个嗅探浏览器还占着配置目录，新窗口被转交给它了。现在打开前会先清掉。"),
+               ("新增", "AI 助手可以新建文件夹，并在改完文件后自动刷新文件区，不用手动点刷新。"),
+               ("优化", "AI 知识库补到 29 章 7300 字（代理排错、Cookie 机制、平台差异、报错对照等），并修掉「版本没变就不更新知识」的缓存问题。"),
+               ("说明", "README 增加安装前必读：没有代码签名，SmartScreen 拦截时怎么处理、怎么确认是官方包。")]},
     {"v": "1.5.8", "date": "2026-11-17",
      "items": [("新增", "嗅探浏览器会带上你导入的登录态：需要登录才出流的站点也能抓到地址。"),
                ("新增", "嗅探窗口打开后自动到最前，不再躲在主界面后面；窗口默认最大化。"),
@@ -8669,7 +8676,7 @@ def ai_chat(messages, job=None):
                 except Exception as e:
                     result = {"ok": False, "error": str(e)[:200]}
                 # 这个工具动过文件：标记一下，任务结束时前端会自己刷新列表
-                if job is not None and name in _AI_FILE_TOOLS:
+                if job is not None and name in AI_FILE_TOOLS:
                     job["touched"] = True
             spent = int((time.time() - t1) * 1000)
             if isinstance(result, dict):

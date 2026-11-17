@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/lertone/VideoSaver/releases/latest"><img src="https://img.shields.io/github/v/release/lertone/VideoSaver?label=version&color=5b8cff" alt="version"></a>
+  <img src="https://img.shields.io/github/release-date/lertone/VideoSaver?label=updated&color=3ddc97" alt="updated">
   <a href="https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml"><img src="https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml/badge.svg" alt="build"></a>
   <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
@@ -17,6 +19,35 @@
 </p>
 
 ![VideoSaver 主界面](docs/screenshot.png)
+
+---
+
+> ## ⚠️ 安装前请先读这段
+>
+> **VideoSaver 没有代码签名证书。** 代码签名证书一年要几千到上万元，个人开发者负担不起，所以它没买。
+>
+> 后果很直接：Windows 会弹「**Windows 已保护你的电脑**」或「**通常不会下载此文件**」，
+> 发布者显示「未知」。**这是没签名的正常表现，不等于文件有病毒或被篡改。**
+>
+> 想继续安装，任选一种：
+>
+> 1. 点「**更多信息**」→「**仍要运行**」
+> 2. 右键安装包 → **属性** → 底部勾选「**解除锁定**」→ 确定，再双击
+> 3. 换**免安装版** `VideoSaver-<版本>-windows-x64.zip`，解压后直接运行，不经过安装器
+>
+> **怎么确认下到的是官方包？**
+>
+> - 只在 [Releases](https://github.com/lertone/VideoSaver/releases) 页面下载，别用第三方下载站的转发链接
+> - 所有产物由 GitHub Actions 从本仓库源码构建，构建日志公开可查（Actions 标签页）
+> - 源码就在这个仓库里，不放心可以自己 `python build_exe.py` 打一份，或者直接跑 `python server.py`
+>
+> **关于数据**：没有账号、没有遥测、没有云端。下载记录、登录信息、配置都只写在
+> `%LOCALAPPDATA%\VideoSaver`（macOS/Linux 在用户目录下），卸载程序不会上传也不会删除它们。
+> 唯一的联网行为是你主动触发的：下载、解析服务、AI 助手（用你自己填的 Key）、反馈。
+>
+> **macOS 同理**：没有 Apple Developer 证书（一年 99 美元），所以是 ad-hoc 签名、未公证。
+> 首次打开需要右键 →「打开」，或执行
+> `xattr -dr com.apple.quarantine /Applications/VideoSaver.app`。
 
 ---
 

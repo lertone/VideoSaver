@@ -91,6 +91,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # 同名资产要覆盖：重推同一个 tag 时（比如同版本号下修了 bug），
+          # 不加这个参数会静默跳过上传，Release 里永远是最早那份产物。
+          overwrite_files: true
           files: |
             release/*
             installer_out/*.exe

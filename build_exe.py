@@ -215,7 +215,11 @@ def stage_assets(onefile=False):
     """
     target = DIST if not onefile else os.path.join(ROOT, "dist")
     ok = True
-    for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png", "donate-alipay.png", "donate-wechat.png", "feedback_config.json"):
+    for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png",
+                 "donate-alipay.png", "donate-wechat.png", "feedback_config.json",
+                 # 许可文件必须随包分发：既声明本项目的非商业许可，
+                 # 也包含 ffmpeg(GPL) / yt-dlp(Unlicense) 等第三方组件的许可说明。
+                 "LICENSE.txt", "LICENSE"):
         src = os.path.join(ROOT, name)
         dst = os.path.join(target, name)
         if not os.path.isfile(src):

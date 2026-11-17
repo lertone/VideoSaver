@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/github/release-date/lertone/VideoSaver?label=updated&color=3ddc97" alt="updated">
   <a href="https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml"><img src="https://github.com/lertone/VideoSaver/actions/workflows/build-all.yml/badge.svg" alt="build"></a>
   <img src="https://img.shields.io/badge/python-3.12-blue" alt="python">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
+  <img src="https://img.shields.io/badge/license-NonCommercial-orange" alt="license">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
 </p>
 
@@ -270,4 +270,18 @@ B 站不接 DTK，不需要在 DTK 里配 B 站 Cookie。
 
 ## License
 
-[MIT](LICENSE)
+本项目自 **1.5.10** 起采用 [PolyForm Noncommercial License 1.0.0](LICENSE)——**只允许非商业使用**。
+
+| | |
+|---|---|
+| ✅ 可以 | 个人学习、研究、自用；非营利组织内部使用；改源码自己用；非商业性地分享给他人（保留许可与署名） |
+| ❌ 不可以 | 打包出售、付费网盘/资源站分发、集成进商业产品、以本软件为卖点承接有偿服务、去掉版权声明 |
+
+**需要商用**请通过 [Issues](https://github.com/lertone/VideoSaver/issues) 联系作者协商授权。
+
+> ⚠️ 关于历史版本：1.5.10 之前发布的版本按当时的 **MIT** 许可授权，**该授权不可撤销**。
+> 已经拿到旧版本副本的人，仍可依 MIT 条款使用（包括商用）——这是开源许可的性质，
+> 改协议只能约束之后的版本，不能追溯。
+
+第三方组件保持各自许可：yt-dlp（Unlicense）、FFmpeg（GPL v3）、Python（PSF）、
+pywebview / pythonnet（BSD / MIT）。完整声明见 [LICENSE.txt](LICENSE.txt)。

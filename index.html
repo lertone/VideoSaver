@@ -3140,7 +3140,8 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   }
 
   /* ---------- 顶部状态 ---------- */
-  async function checkEnv() {
+  async function checkEnv(tries) {
+    if (tries === undefined) tries = 3;
     try {
       const j = await api("/api/env");
       const ok = j.ok && !String(j.ytdlp || "").startsWith("ERROR");
@@ -3148,9 +3149,12 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       $("lightText").textContent = ok ? "一切正常" : "有点问题，去看设置";
       $("dir").textContent = j.download_dir || "—";
       $("dirInput").value = j.download_dir || "";
+      // 启动那几秒杀软正在扫 yt-dlp.exe，探测会超时；过 5 秒再试，不要直接下结论
+      if (!ok && tries > 0) setTimeout(() => checkEnv(tries - 1), 5000);
     } catch (e) {
       $("light").className = "light bad";
       $("lightText").textContent = "连不上服务";
+      if (tries > 0) setTimeout(() => checkEnv(tries - 1), 5000);
     }
   }
 
@@ -4719,6 +4723,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
       setLine("ytdlpStatus", "✗ 请求失败：" + e, "bad");
     } finally {
       btn.disabled = false;
+      // 更新完立刻重新比对：否则顶栏的「有新版本」徽章和左侧状态会一直挂着旧结论
+      checkYtdlp();
+      checkEnv();
     }
   }
   $("ytdlpUpdateBtn").onclick = updateYtdlp;
@@ -5215,8 +5222,9 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     } catch (e) { /* 没网或超时就静默，不打扰 */ }
   }
   $("updateBadge").onclick = () => { loadSettings(); openDrawer(true); loadYtdlp(); };
-  setTimeout(checkYtdlp, 2500);
-  setInterval(checkYtdlp, 30 * 60 * 1000);
+  // 启动后等 8 秒再查：刚启动时杀软在扫 yt-dlp.exe，--version 容易超时被误判成「有新版本」
+  setTimeout(checkYtdlp, 8000);
+  setInterval(checkYtdlp, 10 * 60 * 1000);
 
   /* ---- 后台服务心跳：进程如果挂了，页面会变成"僵尸"（点哪都没反应） ---- */
   let offlineFails = 0, wasOffline = false;

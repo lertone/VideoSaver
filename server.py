@@ -78,10 +78,15 @@ FEEDBACK_RETRY_SECONDS = 120
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.9"
+APP_VERSION = "1.5.10"
 APP_DATE = "2026-11-17"
 
 CHANGELOG = [
+    {"v": "1.5.10", "date": "2026-11-17",
+     "items": [("修复", "明明已经是最新版 yt-dlp，顶栏还提示「有新版本」——启动那几秒杀软在扫 exe，版本探测超时被当成了旧版。现在会重试，失败结果不再当真。"),
+               ("修复", "左侧状态「有点问题，去看设置」出现后不会自己恢复，要重开程序；现在探测失败会重试 3 次。"),
+               ("优化", "环境探测加了缓存，不再每次开程序都跑两个 exe。"),
+               ("优化", "更新完 yt-dlp 后，顶栏徽章和左侧状态立即刷新，不用手动重开。")]},
     {"v": "1.5.9", "date": "2026-11-17",
      "items": [("修复", "AI 助手一调用工具就报错（name '_AI_FILE_TOOLS' is not defined），1.5.8 里助手基本不可用，已修。"),
                ("修复", "刚启动那十几秒会误报「后台服务未运行」，其实服务只是还在探测代理；现在启动后 30 秒内不提示。"),
@@ -883,6 +888,10 @@ def reveal_path(path):
 # performance 里的媒体资源（mp4/m3u8/mpd），再交给现有下载链路。
 _SNIFF = {"items": {}, "page": "", "window": None, "ts": 0.0, "error": "",
           "cookies": 0, "cookie_mode": ""}
+
+# yt-dlp / ffmpeg 的 --version 探测结果。这两个 exe 启动一次要一两秒，
+# 启动瞬间还可能被杀软扫描挡住，所以成功时缓存 60 秒；失败不缓存，下次重新探。
+_ENV_PROBE = {"ts": 0.0, "ytdlp": "", "ffmpeg": "", "ok": False}
 
 SNIFF_JS = r"""
 (function () {
@@ -5250,19 +5259,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._write("[FAILED] ffmpeg 退出码 " + str(proc.returncode) + "\n")
 
     def handle_env(self):
-        ytdlp, ok1 = _run([YTDLP, "--version"], timeout=15)
-        ffmpeg, ok2 = _run([FFMPEG or "ffmpeg", "-version"], timeout=15)
+        now = time.time()
+        if _ENV_PROBE["ok"] and now - _ENV_PROBE["ts"] < 60:
+            ytdlp, ffmpeg, both = (_ENV_PROBE["ytdlp"], _ENV_PROBE["ffmpeg"],
+                                   True)
+        else:
+            ytdlp, ok1 = _run([YTDLP, "--version"], timeout=15)
+            ffmpeg, ok2 = _run([FFMPEG or "ffmpeg", "-version"], timeout=15)
+            both = bool(ok1 and ok2)
+            ffmpeg = ffmpeg.splitlines()[0] if ffmpeg and ok2 else ffmpeg
+            if both:                      # 失败不缓存：让前端重试能真的恢复
+                _ENV_PROBE.update({"ts": now, "ytdlp": ytdlp, "ffmpeg": ffmpeg,
+                                   "ok": True})
         cfg = get_config()
         return self._send_json({
             "ytdlp": ytdlp,
-            "ffmpeg": (ffmpeg.splitlines()[0] if ffmpeg and ok2 else ffmpeg),
+            "ffmpeg": ffmpeg,
             "js_runtime": JS_RUNTIME or "",
             "download_dir": cfg["download_dir"],
             "proxy_mode": cfg["proxy"]["mode"],
             "proxy": PROXIES.status(cfg),
             "cookie_files": len(COOKIES.list()),
             "bind_host": BIND_HOST,
-            "ok": bool(ok1 and ok2),
+            "ok": both,
         })
 
     def handle_settings(self):

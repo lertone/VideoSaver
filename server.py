@@ -1270,6 +1270,45 @@ def _cdp_sniff(port, proc, want_url="", before=None):
         pass
 
 
+def _kill_stale_sniffer():
+    """杀掉还占着嗅探配置目录的浏览器。
+
+    Edge/Chrome 的 --user-data-dir 是进程级独占的：只要有一个残留实例占着，
+    新启动的进程会把「打开这个网址」转交给它、然后自己安静退出 ——
+    结果新窗口没出现（置顶找不到目标），用户看到的是那个卡在空白页的旧窗口。
+    所以每次打开前先把占坑的清掉。
+    """
+    if not IS_WIN:
+        return
+    out = ""
+    try:
+        out = subprocess.run(
+            ["wmic", "process", "where", "name='msedge.exe'",
+             "get", "ProcessId,CommandLine"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=NO_WINDOW).stdout or ""
+    except Exception:
+        return
+    killed = 0
+    for line in out.splitlines():
+        if "sniff_profile" not in line:
+            continue
+        pid = (line.split() or [""])[-1]
+        if not pid.isdigit():
+            continue
+        try:
+            subprocess.run(["taskkill", "/PID", pid, "/F"],
+                           capture_output=True, timeout=8, creationflags=NO_WINDOW)
+            killed += 1
+        except Exception:
+            pass
+    if killed:
+        try:
+            _SNIFF["error"] = ""
+        except Exception:
+            pass
+
+
 def _sniff_open(url):
     edge = _find_chromium()
     if not edge:
@@ -1286,6 +1325,7 @@ def _sniff_open(url):
             old.terminate()
         except Exception:
             pass
+    _kill_stale_sniffer()      # 连上次残留的、占着配置目录的实例一起清掉
     port = _free_port()
     profile = os.path.join(DATA_DIR, "sniff_profile")
     try:
@@ -6570,6 +6610,10 @@ AI_SYSTEM_PROMPT = """你是 VideoSaver 的专属智能助手（VS-Agent），�
 - 不要自己拼 ffmpeg / yt-dlp 参数，也不要执行任意命令，只用上面这些工具。
 - 用户要「抓某个网页的视频」：先 open_sniffer(url)，让他播放，再 list_sniffed 挑地址下载。
 - 用户要反馈/点赞：用 send_feedback，不要让他自己找邮箱，更不要让他配置 SMTP 或授权码。
+- 要「按内容命名」：先 media_info 看标题/时长，必要时 look_at_video 抽帧看画面，
+  再 rename_file / rename_files 批量改；拿不准的命名先给方案让用户点头，不要一次改完才发现不对。
+- 要归档整理：create_folder 建目录（相对名建在保存目录下，也可以给绝对路径），再 move_files 搬进去。
+- 改完文件不用管界面：这些工具跑完，文件区会自动刷新。
 - 用户嫌占空间：scan_residue 报数量，得到确认后 clean_residue(confirm=true)。
 
 【知识库】
@@ -7082,6 +7126,24 @@ def _ai_src_path(raw, src_dir=""):
     if not name:
         return None
     return os.path.join(base, name)
+
+
+def _t_mkdir(a):
+    """新建文件夹：相对名建在保存目录下，绝对路径就建到指定位置。"""
+    raw = str(a.get("name") or a.get("path") or "").strip()
+    if not raw:
+        return {"ok": False, "error": "缺文件夹名"}
+    base = get_config()["download_dir"]
+    target = raw if os.path.isabs(os.path.expanduser(raw)) else os.path.join(base, raw)
+    target = os.path.abspath(os.path.expanduser(target))
+    if not safe_filename(os.path.basename(target)):
+        return {"ok": False, "error": "文件夹名不合法"}
+    existed = os.path.isdir(target)
+    try:
+        os.makedirs(target, exist_ok=True)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:120]}
+    return {"ok": True, "path": target, "created": not existed}
 
 
 def _t_move(a):
@@ -8036,6 +8098,79 @@ Requested format is not available：自定义 youtube player_client 失效，已
 Unable to connect to proxy：代理没开或端口不是代理，换 7890 或关闭自动探测。
 Sign in to confirm you're not a bot：需要登录 Cookie 或 PO Token。
 No video formats found：图文/合集页，不是单个视频。
+## 数据目录：东西都放哪
+`%LOCALAPPDATA%\\VideoSaver` 是全部数据的家，卸载程序不会删它（想彻底清干净要手动删）：
+`config.json` 设置；`cookies/` 导入的登录信息（每站一个 txt，Netscape 格式）；
+`logs/app.log` 运行日志（出错先看它，只追加不覆盖）；
+`trash/` 删除暂存区（撤销窗口过后送系统回收站）；`ai_memory/MEMORY.md` AI 长期记忆；
+`ai_kb.json` AI 知识库缓存（版本变了会自动重建，不用手动删）；`sniff_profile*/` 嗅探浏览器的配置目录。
+下载目录是用户自己选的，可以在任意盘（包括盘根 F://）。
+
+## 启动、端口与单实例
+双击图标 → `launch.py` 先读 `runtime.json` 看有没有已在跑的实例，有就直接打开那个窗口，不再起第二个。
+端口默认 8765，被占用就往后顺延，实际端口写进 `runtime.json`，也打在启动日志里。
+启动时会起一个「看门狗」小进程，每 5 秒探一次服务，连续 30 秒没响应才重启主程序。
+用户主动退出（托盘 → 退出）时会先停看门狗再退，所以不会自己冒回来。
+如果发现另一个 VideoSaver 在跑，程序会弹框问「结束它换这一份 / 打开正在跑的那个」，不再静默杀掉。
+
+## 代理：怎么选、怎么排错
+代理池支持「按网站固定 / 轮流 / 随机」三种策略，单个节点失败自动换下一个，全不通回退直连。
+auto 模式会去探本机常见的代理端口：7890、7891、10809、1080、8080、20171（Clash/V2Ray 常用）。
+判断依据：同一链接直连 3 秒内没响应、或返回 403/429，就试代理。
+常见现象：能开网页但下载 0 速度 → 多半是代理不通或节点被限速；日志里出现 timeout / SSLError 优先怀疑代理。
+本机探测（127.0.0.1）永远绕过系统代理，否则 Clash 会把本地请求也转走，导致「服务没开却 ping 得通」的假象。
+
+## Cookie：哪些站需要、哪些没用
+需要登录的：B 站（1080P 要登录，4K/HDR 要大会员）、微博、小红书网页版、Instagram、Facebook、腾讯视频会员片。
+不需要的：YouTube 大部分公开视频、大多数短视频站。
+完全没用的：抖音——它要的是服务端算签名，不是 Cookie，必须有解析服务（自建 DTK / 网关，或 Tikhub 托管）。
+导入方式：浏览器装扩展导出 Netscape 格式 txt，在设置里选「从文件读取」，也可以直接把 txt 放进 cookies 目录。
+Chrome/Edge 127 之后 Cookie 数据库是应用绑定加密的，「直接读浏览器」这条路对这两个浏览器基本失效，Firefox 还可以。
+cookie 文件里 `#HttpOnly_` 开头的是有效行（只是标记 HttpOnly），不是注释——少了它 B 站的 SESSDATA 就丢了。
+
+## 平台差异速查
+B 站：yt-dlp 直连 + Cookie；DASH 分离轨，进度里会看到两条流；大会员画质需要对应账号。
+抖音：必须解析服务；Tikhub 走官方托管（地址固定 api.tikhub.io，只要 Token，按量计费，余额不足返回 402）。
+小红书：Tikhub 走 app_v2 拿单文件无水印；图文笔记没有视频，只能存图和正文。
+YouTube：多数可直接下；高码率需要登录时会提示；部分地区要代理。
+腾讯/优酷/爱奇艺：长视频分片多，下载慢是正常的；会员片、DRM 内容下不了。
+快手：部分需要解析服务，部分 yt-dlp 可直取。
+
+## 嗅探：原理与边界
+点「嗅探」打开侧栏，填网址后弹一个独立配置的 Edge/Chrome，用调试端口只读网络事件，抓 mp4/m3u8/mpd 地址。
+打开时会把你导入的 Cookie 注入浏览器，所以需要登录才出流的站点也能抓到。
+抓到地址后点「下载」丢回主界面，走正常下载流程。
+抓不到的情况：视频在 iframe 里且跨域、用了 DRM（Widevine）、或者播放器走的是加密 blob。
+嗅探窗口和主界面用的是不同浏览器配置，互不影响；关掉嗅探窗口不会影响已导入的 Cookie。
+
+## 文件管理：改名、移动、删除与撤回
+文件区只显示视频/音频/图片/文本四类，其它格式（pdf、exe、压缩包）不展示但仍可被 AI 工具查到。
+删除是「先移进应用内回收站」：5 秒内点底部「撤回」能整批还原，超时才送系统回收站（还能在资源管理器里还原）。
+批量操作：按住 Ctrl 拖拽框选，或 Ctrl 单击逐个加选；选中条上「全部清理」一次删完，「转移到…」选目标文件夹。
+移动目标可以是任意路径（别的盘也行）；同名文件不会覆盖，会自动加时间戳后缀。
+保存目录可以设成盘根（如 F://），程序对路径边界有校验，但盘根这种写法历史上出过 bug，已修。
+
+## AI 助手能做什么、不能做什么
+能做：查目录（含别的盘）、搜文件（可按子目录递归）、读媒体信息、抽帧看画面、剪辑/抽音频/转码、
+改名、建文件夹、移动、删除（进回收站）、下载、搜索视频、读日志、清残片、发反馈、记偏好。
+不能做：执行任意 shell 命令、读写与视频无关的系统文件、绕过 DRM、读取账号密码、把数据发到外部。
+危险操作（移动、删除、清残片）会先要一次确认；确认后一次做完，不反复追问。
+AI 动过文件后，界面会自动刷新文件列表，不需要手动点刷新。
+「常驻要求」和「记忆」是偏好，不是命令：与事实冲突以工具结果为准，与安全边界冲突以安全边界为准。
+
+## 常见报错对照
+「拿不到视频 / 解析失败」：抖音先查解析服务；其它站看日志 HTTP 码，401/403 是权限或 Key，402 是 Tikhub 余额，5xx 是对方服务问题，超时多为代理。
+「下载很慢 / 卡住」：看速度和分片数，长视频分片多属正常；换代理或降画质再试；长时间 0 速度才可疑。
+「打不开 / 找不到文件」：确认保存目录有没有被改过、文件是否已被移走；用「位置」按钮定位。
+「登录了还是受限」：会员片、付费内容是权益限制；DRM 不支持。这不是 bug。
+「启动没反应 / 界面打不开」：看 logs/app.log；端口被占用会自动换端口，地址在日志里。
+「后台服务未运行」：连续 15 秒 ping 不通才会提示；先在设置→维护看日志，再决定要不要重开。
+
+## 更新与版本
+顶栏会显示当前版本并自动检测 GitHub 最新 Release，有新版本可点开下载页。
+程序更新后，AI 的知识库缓存会按版本号自动失效重建，不会拿旧版本的说明回答新版本的问题。
+升级方式：装新版前先从托盘退出旧版，否则新窗口打开的仍是旧服务（这是最常见的「装了没用」）。
+
 """
 
 
@@ -8077,12 +8212,26 @@ def _kb_build():
     return chunks
 
 
+def _kb_sig():
+    """知识库指纹：版本号 + 正文摘要。
+
+    以前只比版本号，导致「版本没变但知识库补了内容」时一直读旧缓存，
+    AI 拿不到新条目。加上内容指纹后，改一个字都会重建。
+    """
+    try:
+        h = hashlib.md5(_KB_DOC.encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        h = str(len(_KB_DOC))
+    return "%s-%s" % (APP_VERSION, h)
+
+
 def _kb_chunks():
+    sig = _kb_sig()
     if _KB_CACHE["chunks"] is None:
         try:
             if os.path.isfile(AI_KB_FILE):
                 d = json.load(open(AI_KB_FILE, encoding="utf-8"))
-                if d.get("ver") == APP_VERSION and d.get("chunks"):
+                if d.get("sig") == sig and d.get("chunks"):
                     _KB_CACHE["chunks"] = d["chunks"]
         except Exception:
             pass
@@ -8092,7 +8241,7 @@ def _kb_chunks():
         try:
             os.makedirs(AI_KB_DIR, exist_ok=True)
             with open(AI_KB_FILE, "w", encoding="utf-8") as f:
-                json.dump({"ver": APP_VERSION, "chunks": chunks}, f,
+                json.dump({"ver": APP_VERSION, "sig": sig, "chunks": chunks}, f,
                           ensure_ascii=False)
         except Exception:
             pass
@@ -8150,7 +8299,13 @@ def sanitize_reply(text):
 
 
 
+# 这些工具会改动磁盘：跑完让前端自动刷新文件区，用户不用手动点刷新
+AI_FILE_TOOLS = {"rename_file", "rename_files", "move_files", "delete_files",
+                 "create_folder", "clip_video", "extract_audio", "transcode_video",
+                 "start_download", "collect_and_download", "clean_residue"}
+
 AI_TOOL_IMPL = {"list_files": _t_list_files, "search_files": _t_search_files,
+                "create_folder": _t_mkdir,
                 "dir_stats": _t_dir_stats, "get_settings": _t_settings,
                 "set_download_dir": _t_set_dir, "check_url": _t_check_url,
                 "start_download": _t_download, "recent_logs": _t_logs,
@@ -8317,6 +8472,10 @@ AI_TOOL_SCHEMA = [
         "parameters": _p(names={"type": "array", "items": {"type": "string"}},
                          confirm={"type": "boolean"})}},
     {"type": "function", "function": {
+        "name": "create_folder",
+        "description": "新建文件夹。给相对名就建在保存文件夹里（如「舞蹈/2026」），给绝对路径就建到别处。",
+        "parameters": _p(name={"type": "string", "description": "文件夹名或绝对路径"})}},
+    {"type": "function", "function": {
         "name": "rename_files", "description": "批量改名：一次处理多个文件，每项用 from/to 指定",
         "parameters": _p(items={"type": "array", "items": {"type": "object"}})}},
     {"type": "function", "function": {
@@ -8340,6 +8499,7 @@ _AI_JOBS = {}
 def ai_job_new():
     jid = "j%d" % int(time.time() * 1000)
     _AI_JOBS[jid] = {"status": "running", "steps": [], "reply": "", "error": "",
+                     "touched": False,
                      "started": time.time(), "cancel": False, "phase": "准备中"}
     # 只清已结束的旧任务；正在跑的多长都留着，交给用户自己停
     for k in [k for k, v in _AI_JOBS.items()
@@ -8508,6 +8668,9 @@ def ai_chat(messages, job=None):
                     result = impl(args)
                 except Exception as e:
                     result = {"ok": False, "error": str(e)[:200]}
+                # 这个工具动过文件：标记一下，任务结束时前端会自己刷新列表
+                if job is not None and name in _AI_FILE_TOOLS:
+                    job["touched"] = True
             spent = int((time.time() - t1) * 1000)
             if isinstance(result, dict):
                 for key in ("items", "candidates", "results"):

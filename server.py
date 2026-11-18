@@ -78,10 +78,15 @@ FEEDBACK_RETRY_SECONDS = 120
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.12"
-APP_DATE = "2026-11-18"
+APP_VERSION = "1.5.13"
+APP_DATE = "2026-11-19"
 
 CHANGELOG = [
+    {"v": "1.5.13", "date": "2026-11-19",
+     "items": [("修复", "播放时调倍速，过一会儿又自己变回 1 倍速。浏览器在缓冲、切码率、重新播放时会悄悄重置倍速，现在会记住你选的值并自动纠正，下拉框也跟着同步。"),
+               ("修复", "子文件夹里的文件删不掉也搬不动：文件名里的斜杠被当成非法字符洗掉了。现在支持「sub/文件名」这种写法，也可以指定所在文件夹。"),
+               ("安全", "AI 的文件操作统一限制在保存目录内。之前给绝对路径可以操作任意位置，被诱导就能去搬系统文件。"),
+               ("优化", "全面自检：19 个只读接口、20 项核心功能回归全部通过。")]},
     {"v": "1.5.12", "date": "2026-11-18",
      "items": [("安全", "本地接口不再对任意网站开放：只接受来自本机页面的请求。此前任何网页都能调用接口删文件、改配置、消耗你的 AI 额度。"),
                ("安全", "增加 Host 校验，挡住把恶意域名解析到 127.0.0.1 的 DNS rebinding 攻击。"),
@@ -7186,20 +7191,37 @@ def _t_rename(a):
     return {"ok": True, "from": old, "to": new}
 
 
+def _inside(path, root):
+    """path 是否在 root 之内（含 root 本身）。"""
+    a = os.path.normcase(os.path.realpath(path)).rstrip("\\/")
+    b = os.path.normcase(os.path.realpath(root)).rstrip("\\/")
+    return a == b or a.startswith(b + os.sep)
+
+
 def _ai_src_path(raw, src_dir=""):
-    """AI 指的源文件：绝对路径就直接用（能跨文件夹搬），否则在当前保存文件夹里找。"""
+    """把 AI 给的路径解析成真实文件路径，且必须落在保存目录内。
+
+    以前绝对路径直接用、相对路径又被 safe_filename 洗掉了分隔符：
+    结果是「子文件夹里的文件既搬不动也删不掉」，同时绝对路径还完全不受边界约束，
+    被诱导就能去搬系统文件。现在统一：只认保存目录里的文件，支持 sub/a.mp4 这种相对子路径。
+    """
     s = str(raw or "").strip()
     if not s:
         return None
+    root = os.path.realpath(get_config()["download_dir"])
     if os.path.isabs(s):
-        return os.path.realpath(os.path.expanduser(s))
-    base = (os.path.realpath(os.path.expanduser(src_dir))
-            if src_dir and os.path.isdir(os.path.expanduser(src_dir))
-            else get_config()["download_dir"])
-    name = safe_filename(s)
-    if not name:
+        p = os.path.realpath(os.path.expanduser(s))
+        return p if _inside(p, root) else None
+    base = root
+    if src_dir:
+        b = os.path.realpath(os.path.expanduser(src_dir))
+        if os.path.isdir(b) and _inside(b, root):
+            base = b
+    parts = [x for x in s.replace("\\", "/").split("/") if x and x != "."]
+    if not parts or any(x == ".." for x in parts):
         return None
-    return os.path.join(base, name)
+    p = os.path.realpath(os.path.join(base, *parts))
+    return p if _inside(p, root) else None
 
 
 def _t_mkdir(a):
@@ -7259,10 +7281,13 @@ def _t_delete(a):
         return {"ok": False, "need_confirm": True,
                 "hint": "这是删除操作（进回收站）：先向用户确认，再带 confirm=true 重新调用。"}
     raw = a.get("names")
-    names = [safe_filename(str(x)) for x in raw] if isinstance(raw, (list, tuple)) else             ([safe_filename(str(raw))] if raw else [])
-    paths = [p for p in (safe_download_path(n) for n in names) if p and os.path.isfile(p)]
+    items = ([str(x) for x in raw] if isinstance(raw, (list, tuple))
+             else ([str(raw)] if raw else []))
+    src_dir = str(a.get("src_dir") or "").strip()
+    paths = [p for p in (_ai_src_path(x, src_dir) for x in items)
+             if p and os.path.isfile(p)]
     if not paths:
-        return {"ok": False, "error": "没有可删除的文件"}
+        return {"ok": False, "error": "没有可删除的文件（子目录请写 sub/文件名，或给 src_dir）"}
     ok, err = send_to_recycle_bin(paths)
     return {"ok": ok, "deleted": len(paths) if ok else 0, "error": err}
 
@@ -8542,7 +8567,7 @@ AI_TOOL_SCHEMA = [
                          src_dir={"type": "string", "description": "源文件夹，留空=当前保存文件夹"},
                          confirm={"type": "boolean"})}},
     {"type": "function", "function": {
-        "name": "delete_files", "description": "把文件送进系统回收站（必须先向用户确认，confirm=true）",
+        "name": "delete_files", "description": "把文件送进系统回收站（必须先向用户确认，confirm=true）。子目录里的文件写 sub/文件名，或用 src_dir 指定所在文件夹",
         "parameters": _p(names={"type": "array", "items": {"type": "string"}},
                          confirm={"type": "boolean"})}},
     {"type": "function", "function": {

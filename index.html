@@ -4001,9 +4001,23 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
 
     if (kind === "video") {
       w.video.src = src;
+      w.wantRate = 1;                       // 用户想要的倍速，和元素当前值分开记
       w.video.playbackRate = 1;
       w.video.addEventListener("loadedmetadata", () => layoutVideo(w));
-      ["ratechange", "durationchange", "play", "seeking"].forEach(ev => {
+      // Chromium 在缓冲、切码率、重新 play 的时候会把 playbackRate 静默打回 1，
+      // 表现就是「刚调成 1.5×，一秒后自己变回正常速度」。这里记住意图，一被重置就拉回来。
+      w.video.addEventListener("ratechange", () => {
+        const want = w.wantRate || 1;
+        if (Math.abs(w.video.playbackRate - want) > 0.01) {
+          w.video.playbackRate = want;      // 第二次赋值后值相等，不会无限递归
+        }
+        const sel = w.el.querySelector(".prate");
+        if (sel && Math.abs((parseFloat(sel.value) || 1) - want) > 0.01) {
+          sel.value = String(want);         // 下拉框也跟回来，别一个 1.5 一个 1.0
+        }
+        paintStat(w);
+      });
+      ["durationchange", "play", "seeking"].forEach(ev => {
         w.video.addEventListener(ev, () => paintStat(w));
       });
       w.video.addEventListener("timeupdate", () => {
@@ -4479,6 +4493,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
     const w = WINS.get(el.dataset.id);
     if (!w) return;
     const r = parseFloat(sel.value) || 1;
+    w.wantRate = r;                        // 先记住，被浏览器重置时才有依据拉回来
     if (w.video) w.video.playbackRate = r;
     if (w.audio) w.audio.playbackRate = r;
     paintStat(w);

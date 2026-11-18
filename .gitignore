@@ -1,6 +1,8 @@
 # 构建产物
 build/
 dist/
+dist_v*/
+dist_*/
 release/
 installer_out/
 *.spec

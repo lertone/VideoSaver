@@ -78,10 +78,15 @@ FEEDBACK_RETRY_SECONDS = 120
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.11"
+APP_VERSION = "1.5.12"
 APP_DATE = "2026-11-18"
 
 CHANGELOG = [
+    {"v": "1.5.12", "date": "2026-11-18",
+     "items": [("安全", "本地接口不再对任意网站开放：只接受来自本机页面的请求。此前任何网页都能调用接口删文件、改配置、消耗你的 AI 额度。"),
+               ("安全", "增加 Host 校验，挡住把恶意域名解析到 127.0.0.1 的 DNS rebinding 攻击。"),
+               ("说明", "SECURITY.md 重写为对外说明：安全模型、已知边界（未签名、令牌随包、Cookie 明文）、不在受理范围。"),
+               ("修复", "仓库忽略规则补上临时构建目录，避免带真实令牌的产物被误提交。")]},
     {"v": "1.5.11", "date": "2026-11-18",
      "items": [("说明", "授权范围变更：自本版起只允许个人/非商业使用（PolyForm Noncommercial 1.0.0），商用需另行授权。"),
                ("说明", "1.5.10 及更早版本仍按当时的 MIT 许可授权，该授权不可撤销。"),
@@ -4214,10 +4219,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("[%s] %s\n" % (self.address_string(), fmt % args))
 
+    def _origin_ok(self):
+        """只接受来自本机页面的请求。
+
+        以前回的是 Access-Control-Allow-Origin: *，还带 Allow-Private-Network，
+        等于允许任意网站用 JS 调这个本地服务 —— 一个钓鱼页面就能 fetch
+        /api/files/delete 删你的文件，或者拿你的 AI Key 刷额度。
+        现在：Origin 必须是本机地址（浏览器直连/curl 不带 Origin 的照常放行）。
+        """
+        origin = (self.headers.get("Origin") or "").strip()
+        if not origin:
+            return True                              # 非浏览器客户端
+        try:
+            u = urllib.parse.urlsplit(origin)
+        except Exception:
+            return False
+        if u.scheme not in ("http", "https"):
+            return False
+        h = (u.hostname or "").lower()
+        if h in ("127.0.0.1", "localhost", "::1"):
+            return True
+        # 用户显式用 --host 绑了局域网地址时，页面本身也是那个地址，不能把自己挡住
+        return bool(BIND_HOST) and h == BIND_HOST.lower()
+
+    def _host_ok(self):
+        """校验 Host，挡住 DNS rebinding（把恶意域名解析到 127.0.0.1）。"""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return True
+        name = host.rsplit(":", 1)[0] if ":" in host and not host.endswith("]") else host
+        name = name.strip("[]")
+        if name in ("127.0.0.1", "localhost", "::1"):
+            return True
+        return bool(BIND_HOST) and name == BIND_HOST.lower().strip("[]")
+
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        # Chrome 的私有网络访问检查：从公网页面访问 127.0.0.1 会要求这个头
-        self.send_header("Access-Control-Allow-Private-Network", "true")
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin and self._origin_ok():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
 
     def _write_body(self, body):
         """写响应。页面刷新/关闭时对端会先断开，这属于正常情况，
@@ -4289,6 +4329,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _dispatch(self, method):
         try:
+            # 先验来源：不对就直接拒，连 body 都不读
+            if not (self._origin_ok() and self._host_ok()):
+                return self._send_json({"ok": False,
+                                        "error": "来源不被允许（只接受本机页面）"}, 403)
             self._body_cache = None
             if method == "POST":
                 # /api/upload 自己流式读 body。这里预读会把整段文件塞进内存，

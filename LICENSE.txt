@@ -1,7 +1,7 @@
 VideoSaver 许可协议与使用条款
 VideoSaver - License Agreement and Terms of Use
 
-版本 1.5.10
+版本 1.5.11
 
 【授权范围（自 1.5.10 起）】
 本软件采用 PolyForm Noncommercial License 1.0.0，完整条款见同目录 LICENSE。

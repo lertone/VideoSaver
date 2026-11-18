@@ -19,7 +19,9 @@
 import argparse
 import glob
 import json
+import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -207,6 +209,17 @@ def stage_binaries(onefile=False):
     return not missing
 
 
+def _app_version():
+    """从 server.py 读 APP_VERSION，避免版本号写两处。"""
+    try:
+        m = re.search(r'^APP_VERSION = "([^"]+)"',
+                      io.open(os.path.join(ROOT, "server.py"), encoding="utf-8").read(),
+                      re.M)
+        return m.group(1) if m else "1.0.0"
+    except Exception:
+        return "1.0.0"
+
+
 def stage_assets(onefile=False):
     """把页面和图标放到 exe 旁边。
 
@@ -214,6 +227,19 @@ def stage_assets(onefile=False):
     缺了会导致「关窗直接退出」；logo.png 缺了启动动画就是空白。
     """
     target = DIST if not onefile else os.path.join(ROOT, "dist")
+    # LICENSE.txt 的「版本 x.y.z」行跟 APP_VERSION 对齐，别让便携版和安装包对不上
+    try:
+        import re as _re
+        lic = os.path.join(ROOT, "LICENSE.txt")
+        if os.path.isfile(lic):
+            txt = io.open(lic, encoding="utf-8").read()
+            ver = _app_version()
+            txt2, n = _re.subn(r"(?m)^版本 \d+\.\d+\.\d+$", "版本 " + ver, txt)
+            if n and txt2 != txt:
+                io.open(lic, "w", encoding="utf-8", newline="\n").write(txt2)
+                log("LICENSE.txt 版本行已同步为 " + ver)
+    except Exception as e:
+        log("LICENSE.txt 版本同步失败（不影响打包）：%s" % e)
     ok = True
     for name in ("index.html", "logo.png", "favicon.png", "app.ico", "donate.png",
                  "donate-alipay.png", "donate-wechat.png", "feedback_config.json",

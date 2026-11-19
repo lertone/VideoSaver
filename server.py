@@ -6694,7 +6694,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                 "或先用其他站点验证链路。\n")
                 elif kind == "platform":
                     self._write("提示：这是平台侧限制，不是代理/配置问题。爱奇艺「Can't find any video」"
-                                "多为提取器失效或需登录；优酷 -6004 是该账号/IP 被风控；"
+                                "多为提取器失效或需登录；优酷 -6004 目前是 yt-dlp 的提取器整体失效"
+                                "（换视频、换 IP、带不带 Cookie 都一样报），只能等上游修复；"
                                 "会员 DRM 内容即使有 Cookie 也拿不到明文流。可试更新解析引擎、"
                                 "导入登录 Cookie、换网络，或改用官方客户端。\n")
                 elif kind == "invalid_url":
@@ -8365,7 +8366,8 @@ B 站 cookie 的价值不在画质：没有登录 cookie 时连页面解析都�
 ## 站点支持
 yt-dlp 自带 1600+ 提取器。B 站、YouTube、微博视频、小红书图文、快手（取直链）可用。
 抖音图文只有图片没有视频流，不支持；抖音视频需自建 DTK 解析服务。
-爱奇艺 Can't find any video 多为提取器失效或需登录；优酷 -6004 是账号/IP 风控；
+爱奇艺 Can't find any video 多为提取器失效或需登录；优酷 -6004 是 yt-dlp 的优酷提取器
+整体失效（换视频/换 IP/游客都报同一个错，与账号无关），只能等 yt-dlp 上游修复；
 腾讯常见分片 416 与 CDN 限速，会改用 N_m3u8DL-RE 兜底。会员 DRM 内容无法取得明文流。
 
 ## 联网搜索

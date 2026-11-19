@@ -231,6 +231,13 @@
   @keyframes pflow { to { transform: translateX(100%); } }
   .pfill.done { background: linear-gradient(90deg, #35c07a, #5be0a0); box-shadow: 0 0 12px rgba(61,220,151,.45); }
   .pfill.fail { background: linear-gradient(90deg, #d9534f, #ff8a80); box-shadow: 0 0 12px rgba(255,120,120,.4); }
+  /* 清空进度时：先把绿/红的颜色褪回中性，再缩回 0，不要「啪」一下消失 */
+  .pfill.clearing {
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    box-shadow: none; opacity: .45;
+    transition: transform .55s cubic-bezier(.22,1,.36,1), background .5s ease,
+                box-shadow .5s ease, opacity .5s ease;
+  }
 
   /* ---------- 批量任务列表 ---------- */
   .jobs { display: flex; flex-direction: column; gap: 6px; margin-top: 10px;
@@ -781,7 +788,7 @@
   #clOverlay .docbody { overflow-y: auto; }
   .clog .rel { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
                background: var(--panel2); }
-  .clog .rel h4 { margin: 0 0 8px; font-size: 22px; letter-spacing: .5px; color: #fff; }
+  .clog .rel h4 { margin: 0 0 8px; font-size: 22px; letter-spacing: .5px; color: var(--text); }
   .clog .rel h4 span { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
   .clog .rel li { font-size: 12px; line-height: 1.8; color: var(--text); margin: 2px 0;
                   list-style: none; }
@@ -5300,6 +5307,15 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   $("openDirBtn").onclick = () => revealFile("");
   $("clearBtn").onclick = () => {
     logEl.textContent = "等待开始…"; setPTask("");
+    // 进度条一起走：先褪色（绿/红 → 中性），再缩回 0，看着才像「清零」而不是「消失」
+    const f = $("pfill");
+    if (f) {
+      f.classList.add("clearing");
+      requestAnimationFrame(() => f.style.setProperty("--p", "0"));
+      setTimeout(() => {
+        f.classList.remove("done", "fail", "clearing");
+      }, 620);
+    }
     toast("进度记录已清空", "ok");
   };
 
@@ -6482,7 +6498,7 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
         bg1: [255, 255, 255], bg2: [244, 243, 241],
         sf: [255, 255, 255], sfA: .78,
         ln: [0, 0, 0], lnA: .08, hiA: .55,
-        tx: [23, 22, 26], mu: [124, 120, 113],
+        tx: [20, 19, 23], mu: [88, 84, 78],
         ac: [255, 138, 43], ac2: [255, 178, 92], gl: [255, 150, 58], pk: [255, 74, 132],
         thumb: [241, 238, 233], w1: [255, 178, 92], w2: [255, 138, 43], w3: [255, 192, 120],
         rail: [255, 138, 43], railA: .14,

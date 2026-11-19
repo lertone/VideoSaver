@@ -78,10 +78,16 @@ FEEDBACK_RETRY_SECONDS = 120
 # ---------------------------------------------------------------------------
 APP_NAME = "VideoSaver"
 APP_TITLE = "VideoSaver"
-APP_VERSION = "1.5.13"
-APP_DATE = "2026-11-19"
+APP_VERSION = "1.5.14"
+APP_DATE = "2026-11-20"
 
 CHANGELOG = [
+    {"v": "1.5.14", "date": "2026-11-20",
+     "items": [("修复", "画质低的关键原因：传给 yt-dlp 的 JS 运行时参数格式错了（应该是 node:路径，之前只给了路径），它把「C:」当成运行时名直接忽略。等于 Node 从来没生效过，YouTube 的签名挑战没解，格式被砍到只剩低清。"),
+               ("修复", "太阳主题下版本号的标题是白字（写死的），白底上看不见；顺便把次要文字的灰色调深一档。"),
+               ("修复", "点「清空」后，进度条停在原来的位置还在显示绿色/红色，只有日志文字被清了。"),
+               ("新增", "清空进度时进度条会先褪色、再缩回 0，不再是「啪」一下消失。"),
+               ("说明", "新增 docs/ROADMAP-功能弱项.md：Cookie 自动导入、国内平台受限、画质增强三条的具体方案与边界。")]},
     {"v": "1.5.13", "date": "2026-11-19",
      "items": [("修复", "播放时调倍速，过一会儿又自己变回 1 倍速。浏览器在缓冲、切码率、重新播放时会悄悄重置倍速，现在会记住你选的值并自动纠正，下拉框也跟着同步。"),
                ("修复", "子文件夹里的文件删不掉也搬不动：文件名里的斜杠被当成非法字符洗掉了。现在支持「sub/文件名」这种写法，也可以指定所在文件夹。"),
@@ -2127,6 +2133,24 @@ def find_js_runtime():
     return None
 
 
+def js_runtime_arg(path=None):
+    """把运行时路径转成 yt-dlp 认识的 `RUNTIME:PATH`。
+
+    以前直接把 `C://Program Files\nodejs\node.EXE` 塞给 --js-runtimes，
+    yt-dlp 按「冒号前是运行时名」解析，拿到的是 "C" —— 不认识，于是**静默忽略**。
+    表现就是：界面显示「已找到 JS 运行时」，实际 YouTube 的 n-challenge 根本没解，
+    格式列表被砍到只剩低画质。这个坑很隐蔽，因为跑 --version 一切正常。
+    """
+    p = path if path is not None else JS_RUNTIME
+    if not p:
+        return ""
+    name = os.path.basename(str(p)).lower()
+    for kind in ("deno", "node", "bun", "quickjs"):
+        if name.startswith(kind):
+            return "%s:%s" % (kind, p)
+    return ""
+
+
 JS_RUNTIME = find_js_runtime()
 
 _PROC_LOCK = threading.Lock()
@@ -3743,8 +3767,9 @@ def build_cmd(url, fmt, playlist, frags, cfg, proxy, cookie_path, browser,
         cmd += ["--cookies", cookie_path]
     elif browser:
         cmd += ["--cookies-from-browser", browser]
-    if JS_RUNTIME:
-        cmd += ["--js-runtimes", JS_RUNTIME]
+    _jsrt = js_runtime_arg()
+    if _jsrt:
+        cmd += ["--js-runtimes", _jsrt]
     yt = cfg.get("youtube", {})
     if yt.get("player_client"):
         cmd += ["--extractor-args", "youtube:player_client=" + yt["player_client"]]

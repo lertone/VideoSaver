@@ -1306,6 +1306,217 @@ def _cdp_sniff(port, proc, want_url="", before=None):
         pass
 
 
+# ---------------- 从浏览器直接导入 Cookie（CDP） ----------------
+# Chrome/Edge 127 起 Cookie 是 App-Bound 加密的，外部进程（含管理员）都解不开。
+# 唯一合法的读法是让浏览器自己解密：用调试端口启动一次，问它要明文。
+BROWSER_EXES = {
+    "chrome": [
+        os.path.join(os.environ.get("ProgramFiles", ""), "Google", "Chrome",
+                     "Application", "chrome.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Google", "Chrome",
+                     "Application", "chrome.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome",
+                     "Application", "chrome.exe"),
+    ],
+    "edge": [
+        os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Microsoft", "Edge",
+                     "Application", "msedge.exe"),
+        os.path.join(os.environ.get("ProgramFiles", ""), "Microsoft", "Edge",
+                     "Application", "msedge.exe"),
+    ],
+}
+BROWSER_PROFILES = {
+    "chrome": [os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome",
+                            "User Data")],
+    "edge": [os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge",
+                          "User Data")],
+}
+# Cookie 域名 → cookies 目录里的文件名（跟随现有「一个站点一个 txt」的约定）
+_COOKIE_SITE_MAP = [
+    ("bilibili.com", "bilibili"), ("hdslb.com", "bilibili"),
+    ("douyin.com", "douyin"), ("iesdouyin.com", "douyin"),
+    ("weibo.com", "weibo"), ("weibo.cn", "weibo"),
+    ("xiaohongshu.com", "xiaohongshu"), ("xhscdn.com", "xiaohongshu"),
+    ("youtube.com", "youtube"), ("googlevideo.com", "youtube"), ("google.com", "youtube"),
+    ("youku.com", "youku"), ("iqiyi.com", "iqiyi"), ("qq.com", "tencent"),
+    ("kuaishou.com", "kuaishou"), ("twitter.com", "twitter"), ("x.com", "twitter"),
+    ("instagram.com", "instagram"), ("facebook.com", "facebook"), ("tiktok.com", "tiktok"),
+]
+
+
+def _browser_exe(kind):
+    for p in BROWSER_EXES.get(kind, []):
+        if p and os.path.isfile(p):
+            return p
+    return ""
+
+
+def _browser_profile(kind):
+    for p in BROWSER_PROFILES.get(kind, []):
+        if p and os.path.isdir(p):
+            return p
+    return ""
+
+
+def browser_running(kind):
+    exe = "chrome.exe" if kind == "chrome" else "msedge.exe"
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq " + exe, "/NH"],
+                             capture_output=True, text=True, timeout=10,
+                             creationflags=NO_WINDOW).stdout or ""
+        return exe.lower() in out.lower()
+    except Exception:
+        return False
+
+
+def _site_of(domain):
+    d = (domain or "").lstrip(".").lower()
+    for suffix, site in _COOKIE_SITE_MAP:
+        if d == suffix or d.endswith("." + suffix):
+            return site
+    return ""
+
+
+def _write_netscape(path, cookies):
+    lines = ["# Netscape HTTP Cookie File",
+             "# 由 VideoSaver 从浏览器导入，%s" % time.strftime("%Y-%m-%d %H:%M"),
+             ""]
+    for c in cookies:
+        dom = str(c.get("domain") or "")
+        if not dom:
+            continue
+        flag = "TRUE" if dom.startswith(".") else "FALSE"
+        secure = "TRUE" if c.get("secure") else "FALSE"
+        try:
+            exp = int(c.get("expires") or 0)
+        except Exception:
+            exp = 0
+        if exp <= 0:
+            exp = int(time.time()) + 86400 * 180
+        name = str(c.get("name") or "")
+        value = str(c.get("value") or "")
+        if not name:
+            continue
+        prefix = "#HttpOnly_" if c.get("httpOnly") else ""
+        lines.append("%s%s\t%s\t%s\t%s\t%d\t%s\t%s"
+                     % (prefix, dom, flag, c.get("path") or "/", secure, exp, name, value))
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def import_cookies_via_cdp(kind="chrome", timeout=30):
+    """启动一次浏览器，让它自己解密 Cookie，读完就关。
+
+    返回 (ok, message, 详情)。调用前必须确认浏览器已关闭——Chromium 的
+    --user-data-dir 是独占的，已有实例在跑时新进程只会把请求转交过去，
+    调试端口根本不会监听，看起来就像「一直连不上」。
+    """
+    kind = "edge" if str(kind).lower() == "edge" else "chrome"
+    exe = _browser_exe(kind)
+    if not exe:
+        return False, "没找到 %s 的安装位置" % kind, {}
+    profile = _browser_profile(kind)
+    if not profile:
+        return False, "没找到 %s 的用户数据目录（可能没登录过）" % kind, {}
+    if browser_running(kind):
+        return False, "请先关闭 %s 再导入：它的配置目录是独占的，开着的时候调试端口不生效" % kind, {}
+
+    port = _free_port()
+    proc = None
+    err_path = os.path.join(tempfile.gettempdir(), "vs_cookie_import.err")
+    err_fp = None
+    try:
+        err_fp = open(err_path, "w+b")
+        proc = subprocess.Popen(
+            [exe, "--remote-debugging-port=%d" % port,
+             "--user-data-dir=" + profile,
+             "--no-first-run", "--no-default-browser-check",
+             "--disable-sync", "--headless=new", "about:blank"],
+            creationflags=NO_WINDOW, stdout=err_fp, stderr=err_fp)
+    except Exception as e:
+        return False, "启动 %s 失败：%s" % (kind, str(e)[:120]), {}
+
+    ws = None
+    try:
+        end = time.time() + timeout
+        page = None
+        while time.time() < end:
+            for t in _cdp_targets(port):
+                if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                    page = t
+                    break
+            if page:
+                break
+            time.sleep(0.6)
+        if not page:
+            # 把浏览器自己的报错读出来，别让用户对着「连不上」瞎猜
+            detail = ""
+            try:
+                if err_fp is not None:
+                    err_fp.seek(0)
+                    detail = err_fp.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            if "non-default data directory" in detail:
+                return False, ("%s 从 136 版起禁止在日常使用的配置上开调试端口"
+                               "（这是官方专门防「外部程序读 Cookie」的设计），"
+                               "自动导入走不通。请用浏览器扩展导出 cookies.txt 再从这里导入。"
+                               % kind), {}
+            if "profile appears to be in use" in detail or "SingletonLock" in detail:
+                return False, "%s 的配置目录被占用，请把它的所有窗口和后台进程都退出后重试" % kind, {}
+            return False, "连不上 %s 的调试端口（可能被安全软件拦了）" % kind, {}
+
+        from websocket import create_connection
+        ws = create_connection(page["webSocketDebuggerUrl"],
+                               timeout=timeout, suppress_origin=True)
+        _cdp_call(ws, 1, "Network.enable", {}, wait=3)
+        msg = _cdp_call(ws, 2, "Network.getAllCookies", {}, wait=8)
+        cookies = ((msg or {}).get("result") or {}).get("cookies") or []
+        if not cookies:
+            return False, "读到了浏览器，但里面没有 Cookie（是不是没登录过？）", {}
+
+        groups = {}
+        for c in cookies:
+            site = _site_of(c.get("domain"))
+            if site:
+                groups.setdefault(site, []).append(c)
+        if not groups:
+            return False, "有 %d 条 Cookie，但没有属于已支持站点的" % len(cookies), {}
+
+        os.makedirs(COOKIE_DIR, exist_ok=True)
+        written = {}
+        for site, items in groups.items():
+            path = os.path.join(COOKIE_DIR, site + ".txt")
+            _write_netscape(path, items)
+            written[site] = len(items)
+        total = sum(written.values())
+        detail = "、".join("%s %d 条" % (k, v) for k, v in
+                          sorted(written.items(), key=lambda x: -x[1]))
+        return True, "导入完成：%d 个站点 %d 条（%s）" % (len(written), total, detail), written
+    except Exception as e:
+        return False, "导入出错：%s" % str(e)[:140], {}
+    finally:
+        try:
+            if ws is not None:
+                ws.close()
+        except Exception:
+            pass
+        try:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=6)
+                except Exception:
+                    proc.kill()
+        except Exception:
+            pass
+        try:
+            if err_fp is not None:
+                err_fp.close()
+        except Exception:
+            pass
+
+
 def _kill_stale_sniffer():
     """杀掉还占着嗅探配置目录的浏览器。
 
@@ -1850,13 +2061,18 @@ except (TypeError, ValueError):
 PORT = _pick_port(_port_pref)
 BIND_HOST = _arg(_ARGS, "--host", "127.0.0.1") or "127.0.0.1"
 
+# 同分辨率下的取舍顺序：先看分辨率，再看帧率、HDR，最后才比码率。
+# 默认排序把 vcodec 放在很前面，容易挑到码率极低的 AV1 流——看着是 1080p，
+# 实际糊得厉害。这里把「码率」提到编码格式之前，画面优先。
+FORMAT_SORT = ["-S", "res,fps,hdr:12,br,size"]
+
 FORMAT_MAP = {
-    "best": ["-f", "bv*+ba/b"],
-    "2160": ["-f", "bestvideo[height<=2160]+bestaudio/best[height<=2160]"],
-    "1440": ["-f", "bestvideo[height<=1440]+bestaudio/best[height<=1440]"],
-    "1080": ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"],
-    "720": ["-f", "bestvideo[height<=720]+bestaudio/best[height<=720]"],
-    "480": ["-f", "bestvideo[height<=480]+bestaudio/best[height<=480]"],
+    "best": ["-f", "bv*+ba/b"] + FORMAT_SORT,
+    "2160": ["-f", "bestvideo[height<=2160]+bestaudio/best[height<=2160]"] + FORMAT_SORT,
+    "1440": ["-f", "bestvideo[height<=1440]+bestaudio/best[height<=1440]"] + FORMAT_SORT,
+    "1080": ["-f", "bestvideo[height<=1080]+bestaudio/best[height<=1080]"] + FORMAT_SORT,
+    "720": ["-f", "bestvideo[height<=720]+bestaudio/best[height<=720]"] + FORMAT_SORT,
+    "480": ["-f", "bestvideo[height<=480]+bestaudio/best[height<=480]"] + FORMAT_SORT,
     # 音频：优先取 m4a（AAC）源再转 mp3。yt-dlp 默认取最佳音轨，YouTube 是 opus/webm，
     # 于是下载目录里会先冒出一个 .webm 再被转码删掉——用户看着莫名其妙，转码也更慢。
     "audio": ["-f", "ba[ext=m4a]/ba", "-x", "--audio-format", "mp3",
@@ -4518,6 +4734,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.handle_cookie_delete()
                 if self.path == "/api/cookies/refresh":
                     return self.handle_cookie_refresh()
+                if self.path == "/api/cookies/import":
+                    return self.handle_cookie_import()
                 if self.path == "/api/proxy/test":
                     return self.handle_proxy_test()
                 if self.path == "/api/files/rename":
@@ -5751,6 +5969,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif data.get("add"):
             dir_history_add(str(data["add"]))
         return self._send_json({"ok": True, "items": dir_history_list()})
+
+    def handle_cookie_import(self):
+        """从浏览器直接读 Cookie（走 CDP，浏览器自己解密）。"""
+        data = self._read_json()
+        kind = str(data.get("browser") or "chrome").lower()
+        ok, msg, detail = import_cookies_via_cdp(kind)
+        print("[Cookie] 从 %s 导入：%s" % (kind, msg), flush=True)
+        return self._send_json({"ok": ok, "message": msg, "sites": detail,
+                                "browser": kind})
 
     def handle_open_log(self):
         """用记事本打开运行日志，省得用户自己去翻隐藏目录。"""

@@ -2770,6 +2770,25 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
         </div>
         <div class="statusline" id="cookieStatus"></div>
 
+        <div class="field" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="ckAutoImport" style="width:auto;margin:0" />
+            <span>允许从本机浏览器直接读取登录信息</span>
+          </label>
+          <div class="note" style="margin-top:4px">
+            读取走浏览器的调试协议，由浏览器自己解密——Chrome/Edge 127 之后这是唯一可行的
+            方式（外部程序即使管理员权限也解不开）。只读，不改动浏览器数据。
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="iconbtn" id="ckImportChrome" disabled>从 Chrome 导入</button>
+            <button class="iconbtn" id="ckImportEdge" disabled>从 Edge 导入</button>
+          </div>
+          <div class="note" style="margin-top:6px">
+            <b>导入前请先完全退出对应的浏览器</b>（含后台进程），否则调试端口不生效，会一直读不到。
+            导入完成后可以马上重新打开。
+          </div>
+        </div>
+
         <div class="field" style="margin-top:14px">
           <label>导入新的登录信息</label>
           <input type="file" id="cookiePick" accept=".txt,.json,text/plain"
@@ -5381,6 +5400,42 @@ COMPOSE_ENV_FILES=.env docker compose -p dtk -f docker/compose.yml up -d --wait 
   $("detectBtn").onclick = detectProxy;
   $("testBtn").onclick = testProxy;
   $("cookieRefreshBtn").onclick = () => loadCookies($("cookieFile").value);
+
+  /* 从浏览器导入 Cookie：开关由用户掌握，默认关闭 */
+  (function ckImportUI() {
+    const sw = $("ckAutoImport"), bC = $("ckImportChrome"), bE = $("ckImportEdge");
+    if (!sw || !bC || !bE) return;
+    const saved = localStorage.getItem("vsCkImport") === "1";
+    sw.checked = saved;
+    const sync = () => {
+      bC.disabled = !sw.checked;
+      bE.disabled = !sw.checked;
+    };
+    sync();
+    sw.onchange = () => {
+      localStorage.setItem("vsCkImport", sw.checked ? "1" : "0");
+      sync();
+    };
+    async function run(kind, label) {
+      const st = $("cookieStatus");
+      st.className = "statusline busy";
+      st.textContent = "正在读取 " + label + " 的 Cookie…（几秒到半分钟，卡住就检查浏览器是否已完全退出）";
+      try {
+        const j = await api("/api/cookies/import", { browser: kind });
+        st.textContent = j.message || (j.ok ? "导入完成" : "导入失败");
+        st.className = "statusline " + (j.ok ? "ok" : "bad");
+        if (j.ok) {
+          await loadCookies("");
+          toast("已导入 " + label + " 的登录信息", "ok");
+        }
+      } catch (e) {
+        st.textContent = "导入失败：" + e;
+        st.className = "statusline bad";
+      }
+    }
+    bC.onclick = () => run("chrome", "Chrome");
+    bE.onclick = () => run("edge", "Edge");
+  })();
   $("cookieSaveBtn").onclick = saveCookie;
   $("cookieDeleteBtn").onclick = deleteCookie;
   $("cookieGuestBtn").onclick = guestCookie;
